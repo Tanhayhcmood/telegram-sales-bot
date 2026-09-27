@@ -150,6 +150,17 @@ curl -X POST https://YOUR_SERVICE_URL.onrender.com/api/v1/accounts \
   }'
 ```
 
+### روش پایدار برای restart و deploy
+
+برای اینکه بعد از هر restart یا deploy اکانت دوباره از دست نرود، این دو متغیر
+را در بخش **Environment** سرویس Render تنظیم کن:
+
+- `TELEGRAM_USERBOT_PHONE` — شماره اکانت با فرمت بین‌المللی
+- `TELEGRAM_USERBOT_SESSION_STRING` — به‌صورت Secret در Render
+
+سرویس در startup رکورد اکانت را به‌صورت خودکار می‌سازد یا به‌روزرسانی می‌کند و
+userbot را وصل می‌کند. مقدار session در لاگ چاپ نمی‌شود.
+
 ---
 
 ## مرحله ۶ — اسکن کانال‌ها

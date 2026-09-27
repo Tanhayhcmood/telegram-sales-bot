@@ -7,6 +7,7 @@ from app.services.userbot.client import UserBotClient
 from app.services.userbot.handlers import handle_private_message
 from app.services.userbot.reconnect import reconnect_with_backoff
 from app.services.monitoring.alerting import send_alert, notify_account_disconnected
+from app.core.config import settings
 from app.core.logging import get_logger
 from datetime import datetime, timezone
 import asyncio
@@ -30,6 +31,7 @@ class UserBotManager:
       self._keeper_task = None
 
   async def load_accounts(self) -> None:
+      await self._bootstrap_env_account()
       async with AsyncSessionLocal() as session:
           result = await session.execute(select(TelegramAccount).where(TelegramAccount.is_active == True))
           accounts = result.scalars().all()
@@ -38,6 +40,45 @@ class UserBotManager:
           await self.add_account(str(account.id), account.phone, account.session_string)
 
       logger.info("accounts_loaded", count=len(accounts))
+
+  async def _bootstrap_env_account(self) -> None:
+      """Persist the configured Render userbot session before loading accounts.
+
+      Render instances can restart with an empty or newly migrated database.
+      Keeping this opt-in prevents startup from silently creating placeholder
+      accounts while allowing a real session to be restored from environment
+      secrets without exposing it in logs.
+      """
+      phone = settings.TELEGRAM_USERBOT_PHONE.strip()
+      session_string = settings.TELEGRAM_USERBOT_SESSION_STRING.strip()
+      if not phone or not session_string:
+          return
+
+      async with AsyncSessionLocal() as session:
+          result = await session.execute(
+              select(TelegramAccount).where(TelegramAccount.phone == phone)
+          )
+          account = result.scalar_one_or_none()
+          created = account is None
+
+          if account is None:
+              account = TelegramAccount(
+                  phone=phone,
+                  session_string=session_string,
+                  is_active=True,
+              )
+              session.add(account)
+          else:
+              account.session_string = session_string
+              account.is_active = True
+
+          await session.commit()
+
+      logger.info(
+          "env_userbot_account_ready",
+          phone=phone,
+          created=created,
+      )
 
   async def _ping_online(self, account_id: str, client: UserBotClient) -> None:
       """Send a single online ping -- fire and forget, never raises."""

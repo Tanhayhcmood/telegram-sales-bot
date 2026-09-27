@@ -36,6 +36,10 @@ class Settings(BaseSettings):
 
     TELEGRAM_API_ID: int = 2040
     TELEGRAM_API_HASH: str = "b18441a1ff607e10a989891a5462e627"
+    # Optional secure bootstrap for the production userbot. The session string
+    # must be stored as a Render secret; it is never written to logs.
+    TELEGRAM_USERBOT_PHONE: str = ""
+    TELEGRAM_USERBOT_SESSION_STRING: str = ""
 
     ADMIN_BOT_TOKEN: str = ""
     ADMIN_TELEGRAM_IDS: str = ""
