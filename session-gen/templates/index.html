@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ساخت Session String تلگرام</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: Tahoma, Arial, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 16px;
+    padding: 36px;
+    width: 100%;
+    max-width: 480px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  }
+  .logo {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+  .logo svg { width: 56px; height: 56px; }
+  h1 {
+    font-size: 20px;
+    font-weight: 700;
+    color: #f1f5f9;
+    text-align: center;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    text-align: center;
+    font-size: 13px;
+    color: #94a3b8;
+    margin-bottom: 28px;
+  }
+  .step {
+    display: none;
+  }
+  .step.active {
+    display: block;
+  }
+  .field {
+    margin-bottom: 16px;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    color: #94a3b8;
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+  input {
+    width: 100%;
+    padding: 12px 14px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    color: #f1f5f9;
+    font-size: 15px;
+    font-family: inherit;
+    transition: border-color 0.2s;
+    direction: ltr;
+    text-align: left;
+  }
+  input:focus {
+    outline: none;
+    border-color: #3b82f6;
+  }
+  .hint {
+    font-size: 11px;
+    color: #64748b;
+    margin-top: 4px;
+  }
+  .btn {
+    width: 100%;
+    padding: 13px;
+    background: #3b82f6;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 8px;
+    font-family: inherit;
+    transition: background 0.2s;
+  }
+  .btn:hover { background: #2563eb; }
+  .btn:disabled { background: #475569; cursor: not-allowed; }
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid #475569;
+    color: #94a3b8;
+    margin-top: 8px;
+  }
+  .btn-secondary:hover { background: #1e293b; }
+  .error-box {
+    background: #450a0a;
+    border: 1px solid #dc2626;
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 13px;
+    color: #fca5a5;
+    margin-bottom: 14px;
+    display: none;
+  }
+  .info-box {
+    background: #0c2340;
+    border: 1px solid #1d4ed8;
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 13px;
+    color: #93c5fd;
+    margin-bottom: 16px;
+  }
+  .session-box {
+    background: #0f172a;
+    border: 1px solid #22c55e;
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 16px;
+    word-break: break-all;
+    font-family: monospace;
+    font-size: 11px;
+    color: #86efac;
+    line-height: 1.6;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .copy-btn {
+    background: #166534;
+    border-color: #22c55e;
+    color: #86efac;
+  }
+  .copy-btn:hover { background: #15803d; }
+  .spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #fff4;
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .step-indicator {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+    margin-bottom: 24px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #334155;
+  }
+  .dot.active { background: #3b82f6; }
+  .dot.done { background: #22c55e; }
+  .success-icon {
+    text-align: center;
+    font-size: 48px;
+    margin-bottom: 16px;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <svg viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="28" cy="28" r="28" fill="#1d4ed8"/>
+      <path d="M12 28.5L22 38.5L44 17.5" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </div>
+  <h1>ساخت Session String تلگرام</h1>
+  <p class="subtitle">فقط با شماره تلفن — بدون نیاز به API ID یا API Hash</p>
+
+  <div class="step-indicator">
+    <div class="dot active" id="dot1"></div>
+    <div class="dot" id="dot2"></div>
+    <div class="dot" id="dot3"></div>
+  </div>
+
+  <div id="error-box" class="error-box"></div>
+
+  <!-- Step 1: Phone -->
+  <div class="step active" id="step1">
+    <div class="info-box">
+      شماره تلفن اکانت تلگرام خود را با کد کشور وارد کنید. کد تایید به تلگرام شما ارسال می‌شود.
+    </div>
+    <div class="field">
+      <label>شماره تلفن</label>
+      <input type="tel" id="phone" placeholder="+989123456789" />
+      <div class="hint">با کد کشور وارد کنید (مثال: +98 برای ایران)</div>
+    </div>
+    <button class="btn" id="send-btn" onclick="sendCode()">ارسال کد تایید</button>
+  </div>
+
+  <!-- Step 2: Code -->
+  <div class="step" id="step2">
+    <div class="info-box">
+      کد ۵ رقمی به تلگرام شما ارسال شد. اگر تلگرام باز است، نوتیفیکیشن می‌بینید.
+    </div>
+    <div class="field">
+      <label>کد تایید</label>
+      <input type="text" id="code" placeholder="مثال: 12345" maxlength="10" />
+    </div>
+    <button class="btn" id="verify-btn" onclick="verifyCode()">تایید کد</button>
+    <button class="btn btn-secondary" onclick="goBack()">بازگشت</button>
+  </div>
+
+  <!-- Step 3: 2FA -->
+  <div class="step" id="step3">
+    <div class="info-box">
+      احراز هویت دو مرحله‌ای فعال است. رمز Cloud Password خود را وارد کنید.
+    </div>
+    <div class="field">
+      <label>Cloud Password (2FA)</label>
+      <input type="password" id="password" placeholder="رمز تلگرام خود را وارد کنید" />
+    </div>
+    <button class="btn" id="pass-btn" onclick="verify2FA()">تایید رمز</button>
+    <button class="btn btn-secondary" onclick="goBack()">بازگشت</button>
+  </div>
+
+  <!-- Step 4: Result -->
+  <div class="step" id="step4">
+    <div class="success-icon">✅</div>
+    <h1 style="margin-bottom:8px">Session String آماده شد!</h1>
+    <p class="subtitle" style="margin-bottom:16px">این رشته را کپی کنید و در .env پروژه قرار دهید</p>
+    <div class="session-box" id="session-output"></div>
+    <button class="btn copy-btn" onclick="copySession()">📋 کپی Session String</button>
+    <button class="btn btn-secondary" onclick="location.reload()">ساخت سشن جدید</button>
+  </div>
+</div>
+
+<script>
+  function showError(msg) {
+    const box = document.getElementById("error-box");
+    box.textContent = msg;
+    box.style.display = "block";
+    setTimeout(() => box.style.display = "none", 6000);
+  }
+
+  function setStep(n) {
+    document.querySelectorAll(".step").forEach(s => s.classList.remove("active"));
+    document.getElementById("step" + n).classList.add("active");
+    [1,2,3].forEach(i => {
+      const dot = document.getElementById("dot" + i);
+      dot.className = "dot";
+      if (i < n) dot.classList.add("done");
+      else if (i === n) dot.classList.add("active");
+    });
+  }
+
+  async function sendCode() {
+    const phone = document.getElementById("phone").value.trim();
+    if (!phone) {
+      showError("لطفاً شماره تلفن را وارد کنید");
+      return;
+    }
+    const btn = document.getElementById("send-btn");
+    btn.disabled = true;
+    btn.textContent = "در حال ارسال...";
+
+    try {
+      const res = await fetch("{{ base }}/send-code", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({phone})
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setStep(2);
+      } else {
+        showError(data.error);
+        btn.disabled = false;
+        btn.textContent = "ارسال کد تایید";
+      }
+    } catch(e) {
+      showError("خطا در اتصال به سرور");
+      btn.disabled = false;
+      btn.textContent = "ارسال کد تایید";
+    }
+  }
+
+  async function verifyCode() {
+    const code = document.getElementById("code").value.trim();
+    if (!code) { showError("کد را وارد کنید"); return; }
+    const btn = document.getElementById("verify-btn");
+    btn.disabled = true;
+    btn.textContent = "در حال تایید...";
+
+    try {
+      const res = await fetch("{{ base }}/verify-code", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({code})
+      });
+      const data = await res.json();
+      if (data.ok && data.session) {
+        document.getElementById("session-output").textContent = data.session;
+        setStep(4);
+        document.getElementById("dot3").className = "dot done";
+      } else if (data.ok && data.need_2fa) {
+        setStep(3);
+      } else {
+        showError(data.error);
+        btn.disabled = false;
+        btn.textContent = "تایید کد";
+      }
+    } catch(e) {
+      showError("خطا در اتصال به سرور");
+      btn.disabled = false;
+      btn.textContent = "تایید کد";
+    }
+  }
+
+  async function verify2FA() {
+    const password = document.getElementById("password").value;
+    if (!password) { showError("رمز را وارد کنید"); return; }
+    const btn = document.getElementById("pass-btn");
+    btn.disabled = true;
+    btn.textContent = "در حال تایید...";
+
+    try {
+      const res = await fetch("{{ base }}/verify-2fa", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({password})
+      });
+      const data = await res.json();
+      if (data.ok && data.session) {
+        document.getElementById("session-output").textContent = data.session;
+        setStep(4);
+        document.getElementById("dot3").className = "dot done";
+      } else {
+        showError(data.error);
+        btn.disabled = false;
+        btn.textContent = "تایید رمز";
+      }
+    } catch(e) {
+      showError("خطا در اتصال به سرور");
+      btn.disabled = false;
+      btn.textContent = "تایید رمز";
+    }
+  }
+
+  function goBack() {
+    const active = document.querySelector(".step.active");
+    const current = parseInt(active.id.replace("step", ""));
+    if (current > 1) setStep(current - 1);
+  }
+
+  function copySession() {
+    const text = document.getElementById("session-output").textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.querySelector(".copy-btn");
+      btn.textContent = "✅ کپی شد!";
+      setTimeout(() => btn.textContent = "📋 کپی Session String", 2000);
+    });
+  }
+
+  document.addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      const step = document.querySelector(".step.active").id;
+      if (step === "step1") sendCode();
+      else if (step === "step2") verifyCode();
+      else if (step === "step3") verify2FA();
+    }
+  });
+</script>
+</body>
+</html>

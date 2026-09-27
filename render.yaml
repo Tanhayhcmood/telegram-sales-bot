@@ -1,0 +1,112 @@
+services:
+  # ── Web Service (FastAPI + Userbot + Admin Bot) ──────────────────────────────
+  - type: web
+    name: telegram-sales-bot
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /api/healthz
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: API_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: telegram-bot-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_QUEUE_URL
+        sync: false
+      - key: ADMIN_BOT_TOKEN
+        sync: false
+      - key: ADMIN_TELEGRAM_IDS
+        sync: false
+      - key: TELEGRAM_PUBLIC_BOT_TOKEN
+        sync: false
+      - key: PUBLIC_BOT_USERNAME
+        sync: false
+      - key: FORCE_SUBSCRIPTION_ENABLED
+        value: "true"
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: XAI_API_KEY
+        sync: false
+      # ── Crypto wallet addresses ─────────────────────────────────────────
+      - key: WALLET_BTC
+        sync: false
+      - key: WALLET_ETH
+        sync: false
+      - key: WALLET_USDT_TRC20
+        sync: false
+      - key: WALLET_USDT_ERC20
+        sync: false
+      - key: WALLET_LTC
+        sync: false
+      - key: WALLET_BNB
+        sync: false
+      - key: WALLET_TRX
+        sync: false
+      # ───────────────────────────────────────────────────────────────────
+      - key: DATABASE_SSL
+        value: "true"
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: CORS_ORIGINS
+        value: "*"
+
+  # ── ARQ Background Worker (cron tasks: metrics, publishing, followup, learning)
+  - type: worker
+    name: telegram-sales-bot-worker
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    dockerCommand: arq app.workers.arq_worker.WorkerSettings
+    envVars:
+      - key: SECRET_KEY
+        fromService:
+          name: telegram-sales-bot
+          type: web
+          envVarKey: SECRET_KEY
+      - key: API_KEY
+        fromService:
+          name: telegram-sales-bot
+          type: web
+          envVarKey: API_KEY
+      - key: DATABASE_URL
+        fromDatabase:
+          name: telegram-bot-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_QUEUE_URL
+        sync: false
+      - key: ADMIN_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_PUBLIC_BOT_TOKEN
+        sync: false
+      - key: PUBLIC_BOT_USERNAME
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: XAI_API_KEY
+        sync: false
+      - key: DATABASE_SSL
+        value: "true"
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+
+databases:
+  - name: telegram-bot-db
+    plan: free
+    databaseName: telegram_agent
+    user: telegram_agent

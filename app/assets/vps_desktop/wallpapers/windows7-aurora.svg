@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="864" viewBox="0 0 1536 864">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#092b62"/><stop offset=".52" stop-color="#1877bb"/><stop offset="1" stop-color="#071b43"/></linearGradient>
+    <radialGradient id="sun" cx=".79" cy=".31" r=".47"><stop stop-color="#b8f5ff" stop-opacity=".9"/><stop offset=".28" stop-color="#65c9ef" stop-opacity=".38"/><stop offset="1" stop-color="#4aa3d8" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="1536" height="864" fill="url(#sky)"/>
+  <rect width="1536" height="864" fill="url(#sun)"/>
+  <path d="M-70 790C290 560 515 630 761 315c175-224 382-305 780-270v820H-70z" fill="#0b3970" fill-opacity=".68"/>
+  <path d="M-80 854c375-248 552-179 833-492 203-226 423-278 823-222" fill="none" stroke="#8ee5fb" stroke-opacity=".38" stroke-width="42"/>
+  <path d="M-90 864c397-238 558-156 864-477 204-214 420-250 775-187" fill="none" stroke="#fff" stroke-opacity=".12" stroke-width="5"/>
+</svg>

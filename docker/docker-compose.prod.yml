@@ -1,0 +1,126 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: telegram_agent_db
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-telegram_agent}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: telegram_agent_redis
+    restart: always
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD} --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  app:
+    image: telegram-agent:latest
+    container_name: telegram_agent_app
+    restart: always
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-telegram_agent}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      REDIS_QUEUE_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      APP_ENV: production
+      DEBUG: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - sessions_data:/app/sessions
+      - training_data:/app/data/training
+      - app_logs:/app/logs
+    networks:
+      - internal
+      - external
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  worker:
+    image: telegram-agent-worker:latest
+    container_name: telegram_agent_worker
+    restart: always
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-telegram_agent}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      REDIS_QUEUE_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      APP_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - sessions_data:/app/sessions
+      - training_data:/app/data/training
+      - app_logs:/app/logs
+    networks:
+      - internal
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+
+  nginx:
+    image: nginx:alpine
+    container_name: telegram_agent_nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx_certs:/etc/nginx/certs
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - app
+    networks:
+      - external
+
+networks:
+  internal:
+    driver: bridge
+    internal: true
+  external:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  sessions_data:
+  training_data:
+  app_logs:
+  nginx_certs:
+  nginx_logs:

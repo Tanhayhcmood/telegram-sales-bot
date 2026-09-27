@@ -1,0 +1,54 @@
+# Core framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+
+# Telegram
+# aiogram>=3.17 supports pydantic<2.14 + aiofiles<26 — fixes all version conflicts
+telethon>=1.36.0
+aiogram>=3.17.0
+
+# Database
+sqlalchemy[asyncio]>=2.0.36
+asyncpg>=0.29.0
+alembic>=1.14.0
+
+# Redis & Queue
+redis>=5.0.0,<6.0.0
+fakeredis>=2.26.0
+arq>=0.26.0
+
+# Pydantic (2.x — aiogram 3.17+ supports up to 2.13)
+pydantic>=2.10.0,<2.14.0
+pydantic-settings>=2.6.0,<3.0.0
+
+# AI
+openai>=1.57.0
+httpx>=0.23.0,<0.29.0
+
+# Auth & Security
+cryptography>=42.0.0
+PyJWT>=2.9.0
+bcrypt>=3.1.7,<4.0.0
+passlib[bcrypt]>=1.7.4
+
+# Proxy support (SOCKS5/HTTP per-channel routing)
+PySocks>=1.7.1
+
+# Utils
+langdetect>=1.0.9
+psutil>=6.0.0
+structlog>=24.0.0
+python-dotenv>=1.0.0
+pillow>=10.0.0
+requests>=2.32.0
+cairosvg>=2.7.1
+aiofiles>=23.2.1
+tenacity>=8.0.0
+schedule>=1.2.0
+pytz>=2024.0
+cachetools>=5.0.0
+prometheus-client>=0.21.0
+python-multipart>=0.0.18
+rich>=13.0.0
+click>=8.0.0
+playwright>=1.49.0,<2.0.0
