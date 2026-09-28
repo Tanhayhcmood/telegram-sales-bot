@@ -6,6 +6,7 @@ from app.services.sales.payment import (
     PAYMENT_MESSAGE_EN,
     get_payment_reply,
 )
+from app.services.sales.quick_support import get_quick_support_reply
 
 
 class PaymentTests(unittest.TestCase):
@@ -103,6 +104,30 @@ class PaymentTests(unittest.TestCase):
             reply,
             "Ethereum (ETH):\n`0xab96D9Ba2545b5BB6076A649117C5120019062Ba`",
         )
+
+    def test_delivery_question_does_not_reopen_payment_flow(self):
+        question = "چقدر وقت بعد از پرداخت سرور رو تحویل میدی؟"
+
+        self.assertIsNone(get_payment_reply(question, "fa"))
+        reply = get_quick_support_reply(question, "fa")
+
+        self.assertIsNotNone(reply)
+        self.assertIn("اسکرین‌شات تراکنش", reply)
+        self.assertNotIn("کدوم رمزارز", reply)
+
+    def test_unrelated_followup_after_payment_question_is_not_a_coin_choice(self):
+        reply = get_payment_reply(
+            "چه زمانی فعال میشه؟",
+            "fa",
+            history=[
+                {
+                    "role": "assistant",
+                    "content": "برای پرداخت با کدوم رمزارز راحت‌تری؟",
+                }
+            ],
+        )
+
+        self.assertIsNone(reply)
 
 
 if __name__ == "__main__":

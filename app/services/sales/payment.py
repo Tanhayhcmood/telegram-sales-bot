@@ -6,6 +6,8 @@ never ask the language model to generate, copy, or transform them.
 
 from __future__ import annotations
 
+from app.services.sales.quick_support import is_delivery_question
+
 
 PAYMENT_ADDRESSES = {
     "USDT_BEP20": "0xab96D9Ba2545b5BB6076A649117C5120019062Ba",
@@ -211,8 +213,35 @@ def _is_payment_request(text: str, purchase_readiness: str | None) -> bool:
     )
 
 
-def _payment_method_was_requested(history: list[dict] | None) -> bool:
+def _is_short_payment_selection(text: str) -> bool:
+    """Only treat a short coin/network choice as an answer to our payment question."""
+    normalized = _normalize(text)
+    if not normalized or is_delivery_question(normalized):
+        return False
+
+    method = _requested_method(normalized)
+    word_count = len(normalized.split())
+    if method is not None:
+        return word_count <= 6 or _has_any(
+            normalized,
+            "میخوام",
+            "می‌خوام",
+            "می خواهم",
+            "i want",
+            "i prefer",
+            "با ",
+            "فقط ",
+        )
+    return _has_usdt(normalized) and word_count <= 4
+
+
+def _payment_method_was_requested(
+    history: list[dict] | None,
+    text: str,
+) -> bool:
     if not history:
+        return False
+    if not _is_short_payment_selection(text):
         return False
     last_assistant = next(
         (
@@ -270,9 +299,13 @@ def get_payment_reply(
     if language not in {"fa", "en"}:
         return None
 
-    explicit_payment_request = _is_payment_request(text, purchase_readiness)
+    # "How long after payment will delivery take?" is a support question, not
+    # a request to choose a coin. It must never reopen the payment flow.
+    explicit_payment_request = (
+        False if is_delivery_question(text) else _is_payment_request(text, purchase_readiness)
+    )
     method = _requested_method(text)
-    method_followup = _payment_method_was_requested(history)
+    method_followup = _payment_method_was_requested(history, text)
 
     if not explicit_payment_request and not method_followup:
         return None

@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # Customer replies are intentionally short. A large completion budget
     # counts against Groq TPM even when the model returns only a few sentences.
     AI_REPLY_MAX_TOKENS: int = 768
+    # Keep customer-facing support responsive even when the classifier or model
+    # provider is slow. The handler falls back to a useful local reply.
+    AI_CLASSIFIER_TIMEOUT_SECONDS: float = 2.5
+    AI_RESPONSE_TIMEOUT_SECONDS: float = 14.0
 
     XAI_API_KEY: str = ""
     XAI_BASE_URL: str = "https://api.x.ai/v1"

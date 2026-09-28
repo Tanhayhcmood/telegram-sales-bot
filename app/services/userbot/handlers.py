@@ -22,6 +22,7 @@ from app.services.sales.direct_questions import (
     has_customer_context_hint,
 )
 from app.services.sales.payment import get_payment_reply
+from app.services.sales.quick_support import get_quick_support_reply
 from app.services.monitoring.metrics_collector import increment_daily_stat
 from app.cache.redis_client import cache_get, cache_set
 from app.cache.keys import CacheKeys
@@ -36,10 +37,15 @@ import random
 
 logger = get_logger(__name__)
 
+# Telegram can deliver a fast follow-up while the previous message is still
+# waiting for the model. Serializing one customer's messages prevents stale
+# history from producing an out-of-order or repeated answer.
+_conversation_locks: dict[tuple[str, int], asyncio.Lock] = {}
+
 TYPING_DELAYS = {
-    "short": (0.5, 1.5),
-    "medium": (1.5, 3.0),
-    "long": (2.5, 4.5),
+    "short": (0.15, 0.35),
+    "medium": (0.25, 0.65),
+    "long": (0.35, 0.9),
 }
 
 GREETING_TRIGGERS = {
@@ -209,6 +215,19 @@ async def handle_private_message(event, account_id: str):
     if not text.strip():
         return
 
+    lock_key = (account_id, user_id)
+    lock = _conversation_locks.setdefault(lock_key, asyncio.Lock())
+    async with lock:
+        await _handle_private_message(event, account_id, sender, user_id, text)
+
+
+async def _handle_private_message(
+    event,
+    account_id: str,
+    sender,
+    user_id: int,
+    text: str,
+):
     blocked, reason = await should_block(user_id, text)
     if blocked:
         logger.warning("message_blocked", user_id=user_id, reason=reason)
@@ -281,7 +300,77 @@ async def handle_private_message(event, account_id: str):
                 # model. This preserves the inbound message and its language.
         # ──────────────────────────────────────────────────────────────────
 
-        classification = await classify_message(text, language)
+        history = history_before_current
+        messages = _build_model_messages(
+            history,
+            text,
+            settings.CONVERSATION_HISTORY_LIMIT,
+        )
+        quick_support_reply = get_quick_support_reply(text, language)
+        payment_reply = get_payment_reply(
+            text,
+            language,
+            None,
+            history,
+        )
+        # Support intent wins over generic words such as "how much" or
+        # "payment"; otherwise a delivery-time question can be mistaken for a
+        # plan-price or payment-method question.
+        direct_reply = (
+            None
+            if quick_support_reply
+            else get_direct_sales_reply(text, history, language)
+        )
+        discount_reply = None if quick_support_reply else get_discount_reply(text, history, language)
+        if payment_reply and discount_reply:
+            direct_reply = f"{discount_reply}\n\n{payment_reply}"
+        if payment_reply:
+            direct_reply = direct_reply or payment_reply
+        elif discount_reply:
+            direct_reply = discount_reply
+        if quick_support_reply:
+            direct_reply = quick_support_reply
+
+        # Deterministic answers should not wait for a second AI request. The
+        # classifier still runs for normal messages, but a slow provider cannot
+        # delay a known payment/support answer.
+        if direct_reply:
+            classification = {
+                "intent": "support" if quick_support_reply else "sales",
+                "urgency": "low",
+                "use_case": None,
+                "tech_level": "unknown",
+                "budget_max": None,
+                "budget_min": None,
+                "team_size": None,
+                "competitor_mentioned": None,
+                "objection_type": "none",
+                "purchase_readiness": "ready_to_buy" if payment_reply else "exploring",
+            }
+        else:
+            try:
+                classification = await asyncio.wait_for(
+                    classify_message(text, language),
+                    timeout=settings.AI_CLASSIFIER_TIMEOUT_SECONDS,
+                )
+            except Exception as classifier_error:
+                logger.warning(
+                    "classification_timed_out_or_failed",
+                    user_id=user_id,
+                    error=str(classifier_error),
+                )
+                classification = {
+                    "intent": "inquiry",
+                    "urgency": "low",
+                    "use_case": None,
+                    "tech_level": "unknown",
+                    "budget_max": None,
+                    "budget_min": None,
+                    "team_size": None,
+                    "competitor_mentioned": None,
+                    "objection_type": "none",
+                    "purchase_readiness": "exploring",
+                }
 
         if classification.get("intent") in ("sales", "inquiry", "negotiation", "comparison"):
             await get_or_create_lead(session, customer, uuid.UUID(account_id), classification)
@@ -337,26 +426,6 @@ async def handle_private_message(event, account_id: str):
                 label = get_objection_label(language)
                 objection_hint = f"\n\n{label}: {handler}"
 
-        history = history_before_current
-        messages = _build_model_messages(
-            history,
-            text,
-            settings.CONVERSATION_HISTORY_LIMIT,
-        )
-        payment_reply = get_payment_reply(
-            text,
-            language,
-            classification.get("purchase_readiness"),
-            history,
-        )
-        direct_reply = get_direct_sales_reply(text, history, language)
-        discount_reply = get_discount_reply(text, history, language)
-        if payment_reply and discount_reply:
-            direct_reply = f"{discount_reply}\n\n{payment_reply}"
-        if payment_reply:
-            direct_reply = direct_reply or payment_reply
-        elif discount_reply:
-            direct_reply = discount_reply
         is_first_reply = not any(message.get("role") == "assistant" for message in history)
 
         previous_replies = [
@@ -380,7 +449,7 @@ async def handle_private_message(event, account_id: str):
         full_system = f"{system_prompt}\n\n{context_prompt}{objection_hint}"
 
         delay_range = TYPING_DELAYS[reply_length]
-        typing_delay = random.uniform(*delay_range)
+        typing_delay = 0 if direct_reply else random.uniform(*delay_range)
 
         tokens = 0
         try:
@@ -390,7 +459,10 @@ async def handle_private_message(event, account_id: str):
                     reply = direct_reply
                     tokens = 0
                 else:
-                    reply, tokens = await generate_reply(messages, full_system)
+                    reply, tokens = await asyncio.wait_for(
+                        generate_reply(messages, full_system),
+                        timeout=settings.AI_RESPONSE_TIMEOUT_SECONDS,
+                    )
 
                 reply = _remove_repeated_greeting(reply, is_first_reply)
                 if not direct_reply and _has_repeated_content(reply, previous_replies):
@@ -407,10 +479,13 @@ async def handle_private_message(event, account_id: str):
                         "or repeat the previous closing. Reply only to the latest customer message."
                     )
                     try:
-                        fresh_reply, fresh_tokens = await generate_reply(
-                            messages,
-                            anti_repeat_system,
-                            temperature=0.55,
+                        fresh_reply, fresh_tokens = await asyncio.wait_for(
+                            generate_reply(
+                                messages,
+                                anti_repeat_system,
+                                temperature=0.55,
+                            ),
+                            timeout=settings.AI_RESPONSE_TIMEOUT_SECONDS,
                         )
                         reply = _remove_repeated_greeting(fresh_reply, is_first_reply)
                         tokens += fresh_tokens
