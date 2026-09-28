@@ -9,6 +9,7 @@ from app.services.userbot.manager import userbot_manager
 from app.services.ai.engine import generate_reply
 from app.services.ai.prompts import get_followup_message
 from app.services.ai.memory import get_recent_messages, get_customer_memory
+from app.services.sales.order_flow import get_checkout_followup, get_order_state
 from app.models.conversation import Conversation, Message
 from sqlalchemy import select, and_
 from app.core.logging import get_logger
@@ -22,6 +23,9 @@ async def _build_personalized_followup(customer, context: dict, session) -> str:
     name = context.get("name", "there")
     service_type = context.get("service_type", "VPS")
     stage = "day_1"
+    checkout_followup = get_checkout_followup(language, get_order_state(customer))
+    if checkout_followup:
+        return checkout_followup
 
     memory = await get_customer_memory(session, customer.id)
     memory_str = ""

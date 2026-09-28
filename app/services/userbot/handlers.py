@@ -24,6 +24,22 @@ from app.services.sales.direct_questions import (
 )
 from app.services.sales.payment import get_payment_reply, is_payment_only_request
 from app.services.sales.quick_support import get_quick_support_reply
+from app.services.sales.order_flow import (
+    extract_plan,
+    get_checkout_context_prompt,
+    get_order_state,
+    get_order_status_reply,
+    get_payment_next_step,
+    get_receipt_received_reply,
+    has_transaction_reference,
+    is_order_status_request,
+    is_payment_problem_message,
+    is_payment_receipt_message,
+    get_payment_problem_reply,
+    payment_method_for_message,
+    update_order_state,
+)
+from app.services.sales.followup import mark_followup_done, schedule_followup
 from app.services.monitoring.metrics_collector import increment_daily_stat
 from app.cache.redis_client import cache_get, cache_set
 from app.cache.keys import CacheKeys
@@ -119,6 +135,31 @@ def _fallback_reply(language: str, user_id: int, text: str) -> str:
     return options[seed % len(options)]
 
 
+async def _notify_payment_receipt(event, sender, order_state: dict, caption: str, has_media: bool) -> None:
+    """Forward a submitted receipt to configured operators without exposing secrets."""
+    order_id = order_state.get("order_id", "unknown")
+    note = (
+        "🧾 Payment receipt submitted\n"
+        f"Order: `{order_id}`\n"
+        f"Customer: `{sender.id}`"
+    )
+    if caption.strip():
+        note += f"\nCaption: {caption[:800]}"
+
+    for admin_id in settings.admin_ids:
+        try:
+            await event.client.send_message(admin_id, note, parse_mode="md")
+            if has_media:
+                await event.message.forward_to(admin_id)
+        except Exception as error:
+            logger.warning(
+                "payment_receipt_admin_notification_failed",
+                admin_id=admin_id,
+                order_id=order_id,
+                error=str(error),
+            )
+
+
 _GREETING_PREFIXES = (
     "سلام", "درود", "مرحبا", "مرحباً", "اهلا", "أهلا", "أهلاً",
     "hi", "hello", "hey", "hola", "bonjour", "salut", "hallo",
@@ -212,14 +253,22 @@ async def handle_private_message(event, account_id: str):
 
     user_id = sender.id
     text = event.message.text or ""
+    has_media = bool(getattr(event.message, "media", None))
 
-    if not text.strip():
+    if not text.strip() and not has_media:
         return
 
     lock_key = (account_id, user_id)
     lock = _conversation_locks.setdefault(lock_key, asyncio.Lock())
     async with lock:
-        await _handle_private_message(event, account_id, sender, user_id, text)
+        await _handle_private_message(
+            event,
+            account_id,
+            sender,
+            user_id,
+            text,
+            has_media=has_media,
+        )
 
 
 async def _handle_private_message(
@@ -228,8 +277,10 @@ async def _handle_private_message(
     sender,
     user_id: int,
     text: str,
+    has_media: bool = False,
 ):
-    blocked, reason = await should_block(user_id, text)
+    inbound_content = text.strip() or "[media attachment]"
+    blocked, reason = await should_block(user_id, inbound_content)
     if blocked:
         logger.warning("message_blocked", user_id=user_id, reason=reason)
         return
@@ -237,7 +288,7 @@ async def _handle_private_message(
     await increment_daily_stat("messages_received")
 
     text_lower = text.lower().strip()
-    reply_length = "short" if len(text) < 50 else ("medium" if len(text) < 200 else "long")
+    reply_length = "short" if len(inbound_content) < 50 else ("medium" if len(inbound_content) < 200 else "long")
 
     async with AsyncSessionLocal() as session:
         customer = await get_or_create_customer(session, sender, account_id)
@@ -277,13 +328,14 @@ async def _handle_private_message(
             conv.id,
             limit=max(settings.CONVERSATION_HISTORY_LIMIT - 1, 0),
         )
-        await save_message(session, conv.id, event.message.id, "inbound", text)
+        await save_message(session, conv.id, event.message.id, "inbound", inbound_content)
         await session.flush()
+        order_state = get_order_state(customer)
 
         # ── Greeting fast-path ─────────────────────────────────────────────
         # Pure greeting (single word/phrase): skip AI to save tokens and reply
         # instantly. We only do this when the conversation is brand new (≤1 msg).
-        if is_new_conversation and text_lower.strip() in GREETING_TRIGGERS:
+        if not has_media and is_new_conversation and text_lower.strip() in GREETING_TRIGGERS:
             msg_count_check = int(await cache_get(f"conv_msg_count:{conv.id}") or 0)
             if msg_count_check == 0:
                 greeting_reply = GREETING_REPLIES.get(language)
@@ -301,6 +353,55 @@ async def _handle_private_message(
                 # model. This preserves the inbound message and its language.
         # ──────────────────────────────────────────────────────────────────
 
+        # A receipt is a real checkout event, not a normal AI question. Record
+        # it, acknowledge it precisely, and alert an operator for verification.
+        if is_payment_receipt_message(
+            text,
+            has_media=has_media,
+            stage=order_state.get("stage"),
+        ):
+            order_state = update_order_state(
+                customer,
+                "payment_submitted",
+                plan=order_state.get("plan") or extract_plan(text, history_before_current),
+                receipt_message_id=str(event.message.id),
+                receipt_has_transaction_reference=has_transaction_reference(text),
+            )
+            await mark_followup_done(session, customer.id)
+            receipt_reply = get_receipt_received_reply(
+                language,
+                order_state,
+                has_transaction_reference(text),
+            )
+            await save_message(
+                session,
+                conv.id,
+                None,
+                "outbound",
+                receipt_reply,
+                ai_generated=False,
+            )
+            await session.commit()
+            await _notify_payment_receipt(
+                event,
+                sender,
+                order_state,
+                text,
+                has_media,
+            )
+            try:
+                await event.reply(receipt_reply, parse_mode="md")
+                await increment_daily_stat("messages_sent")
+                logger.info(
+                    "payment_receipt_received",
+                    user_id=user_id,
+                    order_id=order_state.get("order_id"),
+                    has_media=has_media,
+                )
+            except Exception as error:
+                logger.error("send_receipt_ack_failed", user_id=user_id, error=str(error))
+            return
+
         history = history_before_current
         messages = _build_model_messages(
             history,
@@ -308,6 +409,16 @@ async def _handle_private_message(
             settings.CONVERSATION_HISTORY_LIMIT,
         )
         quick_support_reply = get_quick_support_reply(text, language)
+        order_status_reply = (
+            get_order_status_reply(language, order_state)
+            if is_order_status_request(text)
+            else None
+        )
+        payment_problem_reply = (
+            get_payment_problem_reply(language, order_state)
+            if is_payment_problem_message(text)
+            else None
+        )
         payment_reply = get_payment_reply(
             text,
             language,
@@ -318,12 +429,32 @@ async def _handle_private_message(
         # "payment"; otherwise a delivery-time question can be mistaken for a
         # plan-price or payment-method question.
         direct_reply = (
-            None
-            if quick_support_reply
-            else get_direct_sales_reply(text, history, language)
+            None if quick_support_reply else (
+                order_status_reply
+                or payment_problem_reply
+                or get_direct_sales_reply(text, history, language)
+            )
         )
         discount_reply = None if quick_support_reply else get_discount_reply(text, history, language)
-        payment_only = bool(payment_reply and is_payment_only_request(text))
+        payment_method = payment_method_for_message(text)
+        selected_plan = order_state.get("plan") or extract_plan(text, history)
+        if payment_reply:
+            payment_stage = "payment_pending" if payment_method else "payment_method_selection"
+            order_state = update_order_state(
+                customer,
+                payment_stage,
+                plan=selected_plan,
+                payment_method=payment_method,
+            )
+            if payment_method:
+                payment_reply = (
+                    f"{payment_reply}\n\n"
+                    f"{get_payment_next_step(language, order_state.get('plan'))}"
+                )
+        payment_only = bool(
+            payment_reply
+            and (is_payment_only_request(text) or payment_method is not None)
+        )
         payment_addendum = None if payment_only else payment_reply
         if payment_only:
             direct_reply = payment_reply
@@ -333,6 +464,20 @@ async def _handle_private_message(
             direct_reply = discount_reply
         if quick_support_reply:
             direct_reply = quick_support_reply
+        elif direct_reply and selected_plan and order_state.get("stage") in {
+            None,
+            "",
+            "discovery",
+            "plan_recommended",
+        }:
+            order_state = update_order_state(
+                customer,
+                "plan_recommended",
+                plan=selected_plan,
+            )
+
+        if payment_method and payment_reply:
+            await schedule_followup(session, customer.id, stage="day_1")
 
         # Deterministic answers should not wait for a second AI request. The
         # classifier still runs for normal messages, but a slow provider cannot
@@ -449,7 +594,8 @@ async def _handle_private_message(
                 or bool(direct_reply)
             ),
         )
-        full_system = f"{system_prompt}\n\n{context_prompt}{objection_hint}"
+        checkout_prompt = get_checkout_context_prompt(order_state, language)
+        full_system = f"{system_prompt}\n\n{context_prompt}\n\n{checkout_prompt}{objection_hint}"
 
         delay_range = TYPING_DELAYS[reply_length]
         typing_delay = 0 if direct_reply else random.uniform(*delay_range)

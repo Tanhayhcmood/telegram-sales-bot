@@ -39,30 +39,34 @@ _PAYMENT_METHODS_FA = (
 )
 
 _PAYMENT_HEADER = (
-    "برای پرداخت، یکی از روش‌های زیر رو انتخاب کن و مبلغ رو به همون آدرس ارسال کن 👇"
+    "برای تکمیل سفارش، یکی از روش‌های زیر رو انتخاب کن و مبلغ دقیق رو فقط به آدرس همان شبکه ارسال کن 👇"
 )
 _PAYMENT_WARNING = (
-    "⚠️ توجه: هر کدوم رو انتخاب کردی، فقط همون نوع ارز رو به همون شبکه بفرست. "
-    "ارسال اشتباه شبکه باعث از دست رفتن دائمی وجه می‌شه."
+    "⚠️ هشدار مهم: نوع ارز و شبکه را قبل از انتقال دوباره بررسی کن. "
+    "ارسال روی شبکه اشتباه ممکن است باعث از دست رفتن دائمی وجه شود."
 )
 _PAYMENT_FOOTER = (
-    "بعد از واریز، اسکرین‌شات تراکنش رو همینجا بفرست تا سرویس فعال بشه ✅"
+    "پس از انتقال، تصویر رسید و در صورت امکان TXID یا هش تراکنش را همینجا بفرست. "
+    "پس از تأیید پرداخت، مرحله فعال‌سازی سفارش را پیگیری می‌کنیم ✅"
 )
 _PAYMENT_HEADER_EN = (
-    "For payment, choose one of the methods below and send the amount to the matching address 👇"
+    "For payment and order completion, choose one method below and send the exact amount only to the matching network address 👇"
 )
 _PAYMENT_WARNING_EN = (
-    "⚠️ Important: send only the same coin to the matching network. "
-    "Sending on the wrong network can permanently lose your funds."
+    "⚠️ Important: verify the asset and network before sending. "
+    "Using the wrong network may permanently lose your funds."
 )
 _PAYMENT_FOOTER_EN = (
-    "After payment, send a screenshot of the transaction here so we can activate your service ✅"
+    "After the transfer, send the receipt and, if available, the TXID or transaction hash here. "
+    "Once payment is verified, we will continue with order activation ✅"
 )
 _PAYMENT_METHOD_QUESTION = (
-    "باشه، با کدوم رمزارز راحت‌تری؟ ما تتر (چند شبکه)، بیت‌کوین، اتریوم، BNB و ترون رو پشتیبانی می‌کنیم."
+    "حتماً. برای تکمیل سفارش، با کدوم رمزارز راحت‌تری؟ "
+    "تتر در چند شبکه، بیت‌کوین، اتریوم، BNB و ترون رو پشتیبانی می‌کنیم."
 )
 _PAYMENT_METHOD_QUESTION_EN = (
-    "Sure — which cryptocurrency would you prefer? We support USDT (multiple networks), Bitcoin, Ethereum, BNB, and Tron."
+    "Certainly. To complete the order, which cryptocurrency would you prefer? "
+    "We support USDT on multiple networks, Bitcoin, Ethereum, BNB, and Tron."
 )
 _USDT_NETWORK_QUESTION = "برای تتر کدوم شبکه رو ترجیح می‌دی: BEP20، ERC20 یا TRC20؟"
 _USDT_NETWORK_QUESTION_EN = "Which USDT network would you prefer: BEP20, ERC20, or TRC20?"
@@ -146,6 +150,11 @@ def _requested_method(text: str) -> str | None:
     if _has_any(normalized, "tron", "trx", "ترون"):
         return "TRX"
     return None
+
+
+def get_requested_payment_method(text: str) -> str | None:
+    """Expose the normalized method name to the checkout state machine."""
+    return _requested_method(text)
 
 
 def _has_usdt(text: str) -> bool:

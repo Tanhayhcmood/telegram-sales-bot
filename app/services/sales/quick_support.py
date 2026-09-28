@@ -65,11 +65,11 @@ def get_quick_support_reply(text: str, language: str) -> str | None:
 
     if language == "fa":
         return (
-            "بعد از پرداخت، اسکرین‌شات تراکنش رو همینجا بفرست تا تیم فعال‌سازی بررسیش کنه. "
-            "بعد از تأیید پرداخت، سرویس در کوتاه‌ترین زمان تحویل می‌شه و اگر زمان دقیق لازم باشه همون‌جا بهت اعلام می‌کنیم."
+            "حتماً. پس از پرداخت، تصویر رسید (اسکرین‌شات تراکنش) و در صورت امکان TXID یا هش تراکنش را همینجا ارسال کن "
+            "تا تیم مالی بررسی کند. پس از تأیید نهایی، فعال‌سازی سرویس انجام می‌شود و زمان دقیق تحویل را همینجا اعلام می‌کنیم."
         )
 
     return (
-        "After payment, send the transaction screenshot here so the activation team can verify it. "
-        "Once the payment is confirmed, the server is delivered as quickly as possible, and we’ll confirm the exact timing with you."
+        "Certainly. After payment, send the receipt and, if available, the TXID or transaction hash here "
+        "so the finance team can verify it. Once payment is confirmed, activation will proceed and we’ll confirm the exact delivery timing here."
     )
