@@ -294,11 +294,15 @@ def get_discount_reply(
         return "ULTRA is quote-based, so I need to confirm its current discount with the team."
 
     regular, current, savings = _DISCOUNT_DETAILS[plan_name]
-    if language == "fa" or re.search(r"[\u0600-\u06ff]", text or ""):
+    if language == "fa":
         return (
             f"روی پلن {plan_name} الان ۳۰٪ تخفیف داریم؛ از {regular} دلار در ماه "
             f"شده {current} دلار، یعنی {savings} دلار کمتر."
         )
+    if language != "en":
+        # The fixed English sentence must not leak into another language.
+        # Let the language-aware model answer instead.
+        return None
     return (
         f"{plan_name} is currently 30% off — from ${regular}/month down to "
         f"${current}/month, so you save ${savings}."
@@ -321,7 +325,9 @@ def get_direct_sales_reply(
     language: str,
 ) -> str | None:
     """Return a direct Persian plan answer, or None for normal LLM handling."""
-    if language != "fa" and not re.search(r"[\u0600-\u06ff]", text or ""):
+    # These fixed answers are Persian by design. Any other language must go
+    # through the language-aware model prompt instead of receiving Persian.
+    if language != "fa":
         return None
 
     kind = _direct_question_kind(text)

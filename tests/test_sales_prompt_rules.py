@@ -8,7 +8,7 @@ class SalesPromptRulesTests(unittest.TestCase):
         prompt = get_system_prompt("fa", is_first_reply=False)
 
         self.assertIn("You are Sara", prompt)
-        self.assertIn("نه بابا 😄 من همینجام، سارا هستم.", prompt)
+        self.assertIn("answer naturally in", prompt)
         self.assertIn("Do not greet again", prompt)
 
     def test_customer_context_skips_discovery(self):
@@ -17,11 +17,12 @@ class SalesPromptRulesTests(unittest.TestCase):
         self.assertIn("Do not ask what they need the server for", prompt)
         self.assertIn("Recommend the closest plan directly", prompt)
 
-    def test_language_policy_has_only_persian_and_english_modes(self):
+    def test_language_policy_uses_the_latest_detected_language(self):
         prompt = get_system_prompt("nl")
 
-        self.assertIn("every other language → reply only in clear, standard English", prompt)
-        self.assertNotIn("Dutch", prompt)
+        self.assertIn("The customer's latest message is in Dutch", prompt)
+        self.assertIn("Reply only in Dutch", prompt)
+        self.assertIn("Never use Persian or English as a fallback", prompt)
 
     def test_payment_policy_requires_explicit_intent_and_coin_selection(self):
         prompt = get_system_prompt("en")

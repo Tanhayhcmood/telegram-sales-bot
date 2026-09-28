@@ -58,6 +58,16 @@ GREETING_REPLIES = {
     "es": "¡Hola! ¿Para qué necesitas el servidor: un juego, un bot o una web?",
     "it": "Ciao! Ti serve il server per un gioco, un bot o un sito?",
     "pt": "Olá! Você precisa do servidor para um jogo, um bot ou um site?",
+    "nl": "Hoi! Waar heb je de server voor nodig: een game, bot of website?",
+    "pl": "Cześć! Do czego potrzebujesz serwera: gry, bota czy strony internetowej?",
+    "uk": "Привіт! Для чого тобі потрібен сервер: для гри, бота чи сайту?",
+    "id": "Hai! Untuk apa kamu membutuhkan server: game, bot, atau situs web?",
+    "vi": "Chào bạn! Bạn cần máy chủ cho game, bot hay website?",
+    "ja": "こんにちは！サーバーはゲーム、ボット、ウェブサイトのどれに使いますか？",
+    "ko": "안녕하세요! 서버를 게임, 봇, 웹사이트 중 어디에 사용하시나요?",
+    "zh-cn": "你好！你需要服务器来运行游戏、机器人还是网站？",
+    "zh-tw": "你好！你需要伺服器來運行遊戲、機器人還是網站？",
+    "hi": "नमस्ते! आपको सर्वर गेम, बॉट या वेबसाइट के लिए चाहिए?",
     "en": "Hi! What do you need the server for: a game, a bot, or a website?",
 }
 
@@ -256,16 +266,19 @@ async def handle_private_message(event, account_id: str):
         if is_new_conversation and text_lower.strip() in GREETING_TRIGGERS:
             msg_count_check = int(await cache_get(f"conv_msg_count:{conv.id}") or 0)
             if msg_count_check == 0:
-                greeting_reply = GREETING_REPLIES.get(language, GREETING_REPLIES["en"])
-                await save_message(session, conv.id, None, "outbound", greeting_reply, ai_generated=False)
-                await session.commit()
-                try:
-                    await event.reply(greeting_reply, parse_mode="md")
-                    await increment_daily_stat("messages_sent")
-                    logger.info("greeting_fast_reply", user_id=user_id, language=language)
-                except Exception as e:
-                    logger.error("send_greeting_failed", user_id=user_id, error=str(e))
-                return
+                greeting_reply = GREETING_REPLIES.get(language)
+                if greeting_reply:
+                    await save_message(session, conv.id, None, "outbound", greeting_reply, ai_generated=False)
+                    await session.commit()
+                    try:
+                        await event.reply(greeting_reply, parse_mode="md")
+                        await increment_daily_stat("messages_sent")
+                        logger.info("greeting_fast_reply", user_id=user_id, language=language)
+                    except Exception as e:
+                        logger.error("send_greeting_failed", user_id=user_id, error=str(e))
+                    return
+                # For a locale without a canned greeting, fall through to the
+                # model. This preserves the inbound message and its language.
         # ──────────────────────────────────────────────────────────────────
 
         classification = await classify_message(text, language)

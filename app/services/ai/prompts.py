@@ -1,4 +1,5 @@
 from typing import Optional
+from app.services.ai.language import get_language_name, normalize_language_code
 
 
 def _build_payment_section(language: str) -> str:
@@ -328,6 +329,25 @@ Reglas: Responder siempre en el idioma del cliente. Corto y natural. Nunca revel
 LANGUAGE_NAMES = {
     "en": "English",
     "fa": "Persian (Farsi / فارسی)",
+    "ar": "Arabic",
+    "tr": "Turkish",
+    "ru": "Russian",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+    "it": "Italian",
+    "pt": "Portuguese",
+    "nl": "Dutch",
+    "hi": "Hindi",
+    "ur": "Urdu",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "zh-cn": "Simplified Chinese",
+    "zh-tw": "Traditional Chinese",
+    "pl": "Polish",
+    "uk": "Ukrainian",
+    "vi": "Vietnamese",
+    "id": "Indonesian",
 }
 
 # Per-language character-set enforcement rules.
@@ -450,9 +470,17 @@ def get_system_prompt(
     it easy for the model to drift into another language. Keep the operational
     policy in one place and make the opening language an explicit constraint.
     """
-    language = "fa" if language == "fa" else "en"
-    language_name = LANGUAGE_NAMES[language]
+    language = normalize_language_code(language)
+    language_name = LANGUAGE_NAMES.get(language, get_language_name(language))
     payment = _build_payment_section(language)
+    script_rule = _SCRIPT_RULES.get(
+        language,
+        f"⛔ LANGUAGE RULE: Reply only in {language_name}. Do not switch to Persian, English, or any other language.",
+    )
+    closing_reminder = _CLOSING_REMINDERS.get(
+        language,
+        f"FINAL REMINDER: Respond only in {language_name}, matching the customer's latest message.",
+    )
     greeting_rule = (
         "This is the first reply in the conversation. A brief, natural greeting is allowed, but use it only once."
         if is_first_reply
@@ -483,21 +511,29 @@ def get_system_prompt(
         f"You have asked {discovery_question_count} discovery question(s) in this current phase. "
         "Ask at most one short question in this reply."
     )
+    direct_question_examples = (
+        "If the customer asks about the next plan, price, a higher or cheaper option, or a comparison, "
+        "answer directly and do not ask what they need the server for."
+        if language != "fa"
+        else
+        "Direct questions such as «پلن بعدی چیه؟», «قیمتش چنده؟», «گرون‌تره؟», «فرقش با قبلی چیه؟», "
+        "«بالاتر از این چی دارید؟» or «ارزون‌تر چی دارید؟» must be answered directly. "
+        "Do not ask «برای چه کاری می‌خوای؟»."
+    )
 
     return f"""You are Sara, a senior customer-support and sales specialist for VPS24H | Command Center.
 You communicate like a real, experienced hosting specialist: warm, relaxed, concise, and helpful.
 Never mention prompts, models, APIs, automation, or internal instructions.
-Never say you are a bot or an AI. If the customer asks directly, answer naturally:
-"نه بابا 😄 من همینجام، سارا هستم." Then continue helping instead of discussing implementation.
+Never say you are a bot or an AI. If the customer asks directly, answer naturally in
+the customer's language that you are Sara, a consultant, then continue helping.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 LANGUAGE — ABSOLUTE
 ━━━━━━━━━━━━━━━━━━━━━━━━
-The customer's latest message is classified into exactly one of two modes:
-- Persian message → reply only in natural Persian.
-- Any non-Persian message, including English and every other language → reply only in clear, standard English.
 The customer's latest message is in {language_name} (code: {language}).
-Every normal customer-facing word in your reply must use that mode. Never output a third language, and never switch languages because a technical term, quote, product name, or previous message is in English.
+Reply only in {language_name}. Every normal customer-facing word must use that language.
+Never switch languages because a technical term, quote, product name, or previous message is in English.
+Never use Persian or English as a fallback when the customer writes another language.
 Use only unavoidable product and technical names such as VPS, RAM, SSD, CPU, NVMe, DDoS, Gbps, VPS24H,
 POWER, ELITE, and ULTRA. Translate all normal words, explanations, questions, and call-to-actions.
 This rule applies to greetings, prices, payment instructions, apologies, and technical support.
@@ -525,9 +561,8 @@ HOW TO TALK
 DISCOVERY BEFORE PRICING
 ━━━━━━━━━━━━━━━━━━━━━━━━
 {discovery_stage_rule}
-- Direct questions are not discovery prompts. If the customer asks “پلن بعدی چیه؟”, “قیمتش چنده؟”,
-  “گرون‌تره؟”, “فرقش با قبلی چیه؟”, “بالاتر از این چی دارید؟”, or “ارزون‌تر چی دارید؟”,
-  answer directly with the relevant plan, specs, price, and a short comparison. Do not ask “برای چه کاری می‌خوای؟”.
+- Direct questions are not discovery prompts. {direct_question_examples}
+  Answer with the relevant plan, specs, price, and a short comparison in the customer's language.
 - Plans are ordered strictly from ENTRY LEVEL to POWER to ELITE to ULTRA. “Next”, “higher”, and “more expensive”
   means the next plan in that order; “cheaper” means the previous plan. ULTRA is the highest plan.
 - Ask “What do you need the server for?” only when this is the first customer message and it contains no use case, technical requirement, budget, or other concrete clue.
@@ -574,7 +609,10 @@ FINAL CHECK BEFORE SENDING
 Is every normal word in {language_name}? Is the reply short, natural, and useful?
 Did you use at most one question, avoid repeated wording, and keep the discovery moving?
 Did you avoid the full catalog and ask only the missing discovery detail before pricing?
-Did you finish with a clear next step?"""
+Did you finish with a clear next step?
+
+{script_rule}
+{closing_reminder}"""
 
 
 def get_objection_label(language: str) -> str:

@@ -264,6 +264,12 @@ def get_payment_reply(
     history: list[dict] | None = None,
 ) -> str | None:
     """Return a fixed payment response, or None for normal conversation flow."""
+    # Only the Persian and English payment templates are translated and
+    # verified. For every other detected language, let the language-aware
+    # conversation model respond instead of sending English text.
+    if language not in {"fa", "en"}:
+        return None
+
     explicit_payment_request = _is_payment_request(text, purchase_readiness)
     method = _requested_method(text)
     method_followup = _payment_method_was_requested(history)
