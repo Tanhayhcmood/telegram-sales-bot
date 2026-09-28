@@ -158,6 +158,9 @@ def _is_payment_request(text: str, purchase_readiness: str | None) -> bool:
     del purchase_readiness
     normalized = _normalize(text)
 
+    if _wants_all_payment_methods(text):
+        return True
+
     direct_phrases = (
         "چطور پرداخت",
         "روش پرداخت",
@@ -168,11 +171,13 @@ def _is_payment_request(text: str, purchase_readiness: str | None) -> bool:
         "میخوام سفارش بدم",
         "میخوام واریز",
         "میخوام بپردازم",
+        "همینو میخوام",
+        "همین پلن رو میخوام",
+        "سفارش میدم",
+        "میخرم",
         "شماره کارت",
         "آدرس کیف پول",
         "کیف پول بده",
-        "کیف پول",
-        "کریپتو",
         "ولت",
         "آدرس بده",
         "آدرس رو بده",
@@ -180,20 +185,23 @@ def _is_payment_request(text: str, purchase_readiness: str | None) -> bool:
         "آدرس بفرست",
         "آدرس رو بفرست",
         "واریز کنم",
-        "پرداخت",
         "ready to pay",
         "i want to buy",
         "i would like to buy",
         "i will pay",
+        "i want this plan",
+        "i want the plan",
+        "i want to order",
+        "i'll buy",
+        "ill buy",
+        "i will buy",
+        "place my order",
         "i'm ready to pay",
         "im ready to pay",
         "let me pay",
         "how can i pay",
         "how do i pay",
         "payment method",
-        "payment",
-        "crypto",
-        "wallet",
         "wallet address",
         "send me the address",
         "where do i send",
@@ -211,6 +219,58 @@ def _is_payment_request(text: str, purchase_readiness: str | None) -> bool:
         "address",
         "send",
     )
+
+
+_NON_PAYMENT_QUESTION_HINTS = (
+    "مشخصات",
+    "چند هسته",
+    "هسته",
+    "رم",
+    "حافظه",
+    "فضا",
+    "ssd",
+    "cpu",
+    "ram",
+    "windows",
+    "لینوکس",
+    "اوبونتو",
+    "گیم",
+    "بازی",
+    "ترید",
+    "سرعت",
+    "عملکرد",
+    "what cpu",
+    "how much ram",
+    "how many cores",
+    "spec",
+    "specs",
+    "performance",
+    "windows",
+    "linux",
+    "ubuntu",
+    "trading",
+    "game",
+    "delivery",
+    "activate",
+    "activation",
+    "when will",
+    "how long",
+)
+
+
+def is_payment_only_request(text: str) -> bool:
+    """Return whether an explicit payment request contains no other question.
+
+    Payment-only messages can be answered by the deterministic payment router.
+    Mixed messages must continue through the normal response path so the model
+    can answer the customer's product or technical question first.
+    """
+    normalized = _normalize(text)
+    if is_delivery_question(text) or not _is_payment_request(text, None):
+        return False
+    if "?" in text or "؟" in text:
+        return not any(hint in normalized for hint in _NON_PAYMENT_QUESTION_HINTS)
+    return not any(hint in normalized for hint in _NON_PAYMENT_QUESTION_HINTS)
 
 
 def _is_short_payment_selection(text: str) -> bool:

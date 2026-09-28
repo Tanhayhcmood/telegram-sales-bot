@@ -6,6 +6,7 @@ from app.models.conversation import Conversation, Message
 from app.services.ai.engine import generate_reply, extract_facts_from_conversation
 from app.services.ai.language import detect_language
 from app.services.ai.prompts import get_system_prompt, get_objection_handler, get_objection_label
+from app.services.ai.response_validation import validate_reply
 from app.services.ai.memory import (
     get_recent_messages,
     build_context_prompt,
@@ -21,7 +22,7 @@ from app.services.sales.direct_questions import (
     get_direct_sales_reply,
     has_customer_context_hint,
 )
-from app.services.sales.payment import get_payment_reply
+from app.services.sales.payment import get_payment_reply, is_payment_only_request
 from app.services.sales.quick_support import get_quick_support_reply
 from app.services.monitoring.metrics_collector import increment_daily_stat
 from app.cache.redis_client import cache_get, cache_set
@@ -256,7 +257,7 @@ async def _handle_private_message(
         previous_messages = await get_recent_messages(session, conv.id, limit=1)
         is_new_conversation = not previous_messages
         previous_lang = conv.language or customer.language_code or "en"
-        language = await detect_language(text)
+        language = await detect_language(text, fallback_language=previous_lang)
         conv.language = language
         customer.language_code = language
         if language != previous_lang:
@@ -322,10 +323,12 @@ async def _handle_private_message(
             else get_direct_sales_reply(text, history, language)
         )
         discount_reply = None if quick_support_reply else get_discount_reply(text, history, language)
-        if payment_reply and discount_reply:
-            direct_reply = f"{discount_reply}\n\n{payment_reply}"
-        if payment_reply:
-            direct_reply = direct_reply or payment_reply
+        payment_only = bool(payment_reply and is_payment_only_request(text))
+        payment_addendum = None if payment_only else payment_reply
+        if payment_only:
+            direct_reply = payment_reply
+        elif discount_reply and direct_reply:
+            direct_reply = f"{direct_reply}\n\n{discount_reply}"
         elif discount_reply:
             direct_reply = discount_reply
         if quick_support_reply:
@@ -500,6 +503,23 @@ async def _handle_private_message(
         except Exception as ai_err:
             logger.error("ai_failed_using_fallback", user_id=user_id, error=str(ai_err))
             reply = _fallback_reply(language, user_id, text)
+
+        if payment_addendum:
+            reply = f"{reply.rstrip()}\n\n{payment_addendum}"
+
+        if not validate_reply(
+            reply,
+            language,
+            payment_allowed=bool(payment_reply),
+        ):
+            logger.warning(
+                "reply_validation_failed",
+                user_id=user_id,
+                language=language,
+                payment_allowed=bool(payment_reply),
+            )
+            safe_reply = _fallback_reply(language, user_id, text)
+            reply = f"{safe_reply}\n\n{payment_addendum}" if payment_addendum else safe_reply
 
         await save_message(
             session, conv.id, None, "outbound", reply,

@@ -20,6 +20,11 @@ class LanguageSwitchTests(unittest.IsolatedAsyncioTestCase):
     async def test_persian_text_uses_only_persian_mode(self):
         self.assertEqual(await detect_language("برای گیم سرور میخوام"), "fa")
 
+    async def test_language_neutral_reply_keeps_active_conversation_language(self):
+        self.assertEqual(await detect_language("۸", fallback_language="fa"), "fa")
+        self.assertEqual(await detect_language("8", fallback_language="en"), "en")
+        self.assertEqual(await detect_language("۸", fallback_language="en"), "en")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@ from app.services.sales.payment import (
     PAYMENT_MESSAGE,
     PAYMENT_MESSAGE_EN,
     get_payment_reply,
+    is_payment_only_request,
 )
 from app.services.sales.quick_support import get_quick_support_reply
 
@@ -52,17 +53,26 @@ class PaymentTests(unittest.TestCase):
         self.assertIn("کدوم رمزارز", reply)
         self.assertNotIn("0xab96D9Ba2545b5BB6076A649117C5120019062Ba", reply)
 
-    def test_payment_keywords_ask_for_a_coin_without_addresses(self):
+    def test_ambiguous_payment_keywords_do_not_start_payment_flow(self):
         for question in ("پرداخت", "کریپتو", "کیف پول", "payment", "wallet"):
             with self.subTest(question=question):
-                reply = get_payment_reply(question, "fa")
-                self.assertIn("کدوم رمزارز", reply)
-                self.assertNotIn("`", reply)
+                self.assertIsNone(get_payment_reply(question, "fa"))
 
-    def test_plan_interest_never_reveals_payment_address(self):
+    def test_clear_plan_purchase_intent_asks_for_a_coin(self):
+        reply = get_payment_reply("I want this plan", "en")
+
+        self.assertIn("which cryptocurrency", reply)
+        self.assertNotIn("`", reply)
+
+    def test_mixed_technical_and_payment_question_is_not_payment_only(self):
+        self.assertFalse(is_payment_only_request("What CPU does POWER have and how can I pay?"))
+        self.assertTrue(is_payment_only_request("How can I pay for POWER?"))
+
+    def test_plan_purchase_intent_asks_for_coin_without_revealing_address(self):
         reply = get_payment_reply("POWER خوبه، همینو میخوام", "fa", "ready_to_buy")
 
-        self.assertIsNone(reply)
+        self.assertIn("کدوم رمزارز", reply)
+        self.assertNotIn("0xab96D9Ba2545b5BB6076A649117C5120019062Ba", reply)
 
     def test_all_methods_request_returns_the_full_fixed_message(self):
         reply = get_payment_reply("همه روش‌های پرداخت رو نشونم بده", "fa")

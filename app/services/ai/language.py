@@ -58,12 +58,26 @@ def _looks_persian(text: str) -> bool:
     )
 
 
-async def detect_language(text: str) -> str:
-    """Return Persian for Persian input and English for every other language."""
+def _contains_letters(text: str) -> bool:
+    """Return whether text contains a Unicode letter rather than only symbols/digits."""
+    return any(character.isalpha() for character in text)
+
+
+async def detect_language(text: str, fallback_language: str | None = None) -> str:
+    """Return the message language, preserving context for language-neutral replies.
+
+    Short replies such as ``۸``, ``yes``, or a product name do not always carry
+    enough signal to identify a language.  In that case the active conversation
+    language is the safest choice; a genuinely linguistic message still wins.
+    """
     text = (text or "").strip()
     if not text:
-        return DEFAULT_LANGUAGE
-    return "fa" if _looks_persian(text) else DEFAULT_LANGUAGE
+        return normalize_language_code(fallback_language)
+    if _looks_persian(text):
+        return "fa"
+    if not _contains_letters(text):
+        return normalize_language_code(fallback_language)
+    return DEFAULT_LANGUAGE
 
 
 def get_language_name(code: str) -> str:
