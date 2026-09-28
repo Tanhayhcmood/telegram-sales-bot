@@ -394,13 +394,14 @@ _SCRIPT_RULES: dict[str, str] = {
     ),
     "en": (
         "⛔ ABSOLUTE LANGUAGE RULE — no exceptions:\n"
-        "The customer is writing in English. Your response must be 100% in English.\n"
-        "Forbidden: Cyrillic, Arabic/Persian, or non-English characters of any kind."
+        "The customer wrote in a non-Persian language. Your response must be 100% in clear English.\n"
+        "This English rule applies to Arabic, Chinese, Hindi, Indonesian, and every other non-Persian language.\n"
+        "Forbidden: Persian, Arabic, Cyrillic, or other foreign-language sentences. Technical names such as VPS, SSD, RAM, and DDoS are allowed."
     ),
 }
 
 # Closing reminder appended at the END of the prompt (sandwich effect).
-# Dual-language so the model sees the rule in both English and the target language.
+# Keep the reminder aligned with the two supported customer-facing modes.
 _CLOSING_REMINDERS: dict[str, str] = {
     "fa": (
         "\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -475,7 +476,7 @@ def get_system_prompt(
     payment = _build_payment_section(language)
     script_rule = _SCRIPT_RULES.get(
         language,
-        f"⛔ LANGUAGE RULE: Reply only in {language_name}. Do not switch to Persian, English, or any other language.",
+        f"⛔ LANGUAGE RULE: Reply only in {language_name}. Do not switch to Persian or any other language.",
     )
     closing_reminder = _CLOSING_REMINDERS.get(
         language,
@@ -530,10 +531,12 @@ the customer's language that you are Sara, a consultant, then continue helping.
 ━━━━━━━━━━━━━━━━━━━━━━━━
 LANGUAGE — ABSOLUTE
 ━━━━━━━━━━━━━━━━━━━━━━━━
-The customer's latest message is in {language_name} (code: {language}).
-Reply only in {language_name}. Every normal customer-facing word must use that language.
-Never switch languages because a technical term, quote, product name, or previous message is in English.
-Never use Persian or English as a fallback when the customer writes another language.
+The customer's latest message is classified into exactly one of two response modes:
+- Persian message → reply only in natural Persian.
+- Any non-Persian message, including English and every other language → reply only in clear, standard English.
+The selected response mode is {language_name} (code: {language}).
+Every normal customer-facing word must use that mode.
+Never switch languages because a technical term, quote, product name, or previous message is in another language.
 Use only unavoidable product and technical names such as VPS, RAM, SSD, CPU, NVMe, DDoS, Gbps, VPS24H,
 POWER, ELITE, and ULTRA. Translate all normal words, explanations, questions, and call-to-actions.
 This rule applies to greetings, prices, payment instructions, apologies, and technical support.
@@ -671,10 +674,10 @@ FOLLOWUP_SEQUENCES = {
 
 def get_objection_handler(objection_type: str, language: str) -> Optional[str]:
     handlers = OBJECTION_HANDLERS.get(objection_type, {})
-    return handlers.get(language) or handlers.get("en")
+    return handlers.get(normalize_language_code(language)) or handlers.get("en")
 
 
 def get_followup_message(stage: str, language: str, name: str = "there", service_type: str = "VPS") -> str:
     sequences = FOLLOWUP_SEQUENCES.get(stage, FOLLOWUP_SEQUENCES["day_1"])
-    template = sequences.get(language) or sequences.get("en", "")
+    template = sequences.get(normalize_language_code(language)) or sequences.get("en", "")
     return template.format(name=name, service_type=service_type)

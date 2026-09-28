@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, and_
 from app.models.customer import Customer
 from app.models.lead import Lead
+from app.services.ai.language import normalize_language_code
 from app.core.logging import get_logger
 from datetime import datetime, timezone, timedelta
 
@@ -74,7 +75,7 @@ async def get_followup_context(session: AsyncSession, customer: Customer) -> dic
     lead = await get_customer_lead(session, customer.id)
     return {
         "name": customer.display_name or customer.username or "there",
-        "language": customer.language_code or "en",
+        "language": normalize_language_code(customer.language_code),
         "service_type": lead.service_type if lead else "VPS",
         "budget_max": lead.budget_max if lead else None,
         "lead_score": lead.score if lead else 0.0,
