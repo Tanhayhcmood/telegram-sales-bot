@@ -1,6 +1,10 @@
 import unittest
 
-from app.services.content.rdp_post_builder import build_rdp_post
+from app.services.content.rdp_post_builder import (
+    build_rdp_post,
+    fit_rdp_caption,
+    rdp_caption_utf16_length,
+)
 
 
 class RdpPostBuilderTests(unittest.TestCase):
@@ -36,6 +40,40 @@ class RdpPostBuilderTests(unittest.TestCase):
         self.assertIn("🇩🇪 Germany", post)
         self.assertIn('<a href="https://t.me/freeserver11">channel</a>', post)
         self.assertIn("👤  Administrator", post)
+
+    def test_sample_fits_one_photo_caption_without_trimming(self):
+        post, _ = self.build(password="TEST-ONLY-NOT-VALID")
+        caption, removed = fit_rdp_caption(post)
+
+        self.assertEqual(caption, post)
+        self.assertEqual(removed, 0)
+        self.assertLessEqual(rdp_caption_utf16_length(caption), 1024)
+        self.assertIn("🚀 Connect: mstsc → paste IP → login", caption)
+        self.assertTrue(caption.endswith("</b>"))
+
+    def test_long_fake_details_compact_only_divider_rules(self):
+        post, _ = self.build(
+            ip="255.255.255.255",
+            password="FAKE-TEST-ONLY-PASSWORD-1234",
+            country_name="United Arab Emirates",
+            country_flag="🇦🇪",
+        )
+        caption, removed = fit_rdp_caption(post)
+
+        def without_rules(value):
+            return [
+                line for line in value.split("\n")
+                if not (line and line[0] in "═─" and all(char == line[0] for char in line))
+            ]
+
+        self.assertGreater(removed, 0)
+        self.assertLessEqual(rdp_caption_utf16_length(caption), 1024)
+        self.assertEqual(without_rules(caption), without_rules(post))
+        self.assertIn("FAKE-TEST-ONLY-PASSWORD-1234", caption)
+
+    def test_unfit_caption_fails_instead_of_becoming_a_second_message(self):
+        with self.assertRaisesRegex(ValueError, "single-photo caption limit"):
+            fit_rdp_caption("x" * 1025)
 
 
 if __name__ == "__main__":

@@ -300,8 +300,11 @@ async def _bg_rdp_post_now(status_msg) -> None:
         from pathlib import Path
         from telethon.errors import FloodWaitError
         from app.services.scanner.rdp_scanner import scan_for_rdp
-        from app.services.content.rdp_post_builder import build_rdp_post
-        from app.services.channel.publisher import _build_post_text
+        from app.services.content.rdp_post_builder import (
+            build_rdp_post,
+            fit_rdp_caption,
+            rdp_caption_utf16_length,
+        )
         from app.services.content.desktop_image_generator import generate_desktop_image
         from app.services.channel.auto_poster import _get_active_channels, mark_channel_posted, _toggle_post_mode
 
@@ -402,19 +405,35 @@ async def _bg_rdp_post_now(status_msg) -> None:
                     country_name=country_name, country_flag=country_flag,
                     seed=seed, channel_username=ch.username,
                 )
-                caption = _build_post_text(ch_content, ch.username, 1024)
+                caption, compacted_chars = fit_rdp_caption(ch_content, 1024)
+                if compacted_chars:
+                    logger.info(
+                        "rdp_caption_decorations_compacted",
+                        channel_id=ch_id,
+                        characters_removed=compacted_chars,
+                        caption_utf16_length=rdp_caption_utf16_length(caption),
+                    )
+
                 async def _send(tg=tg, target=ch.telegram_channel_id,
                                 cap=caption, img=image_bytes):
                     f = io.BytesIO(img)
                     f.name = "vps-desktop.png"
-                    await tg.send_file(target, f, caption=cap, parse_mode="md")
+                    return await tg.send_file(target, f, caption=cap, parse_mode="html")
 
                 try:
-                    await _send()
+                    sent_message = await _send()
                 except FloodWaitError as fw:
                     await asyncio.sleep(fw.seconds + 3)
-                    await _send()
+                    sent_message = await _send()
 
+                logger.info(
+                    "admin_rdp_channel_post_sent",
+                    channel_id=ch_id,
+                    message_id=getattr(sent_message, "id", None),
+                    single_message=True,
+                    has_image=True,
+                    caption_utf16_length=rdp_caption_utf16_length(caption),
+                )
                 success += 1
                 await mark_channel_posted(ch_id)
                 _toggle_post_mode(ch_id)
@@ -436,7 +455,7 @@ async def _bg_rdp_post_now(status_msg) -> None:
         if failed_reasons:
             result_text += "\n\n❌ خطاها:\n" + "\n".join(f"`{r}`" for r in failed_reasons[:5])
         await status_msg.edit_text(result_text, parse_mode="Markdown", reply_markup=back_kb())
-        logger.info("admin_rdp_post_done", success=success, failed=failed, ip=ip)
+        logger.info("admin_rdp_post_done", success=success, failed=failed, single_message=True, has_image=bool(image_bytes))
 
     except Exception as e:
         logger.error("bg_rdp_post_now_crashed", step=_step, error=str(e))

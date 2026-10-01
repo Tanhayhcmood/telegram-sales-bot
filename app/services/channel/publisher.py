@@ -1,6 +1,4 @@
 import io
-import re
-from html import unescape
 import os
 import random
 import hashlib
@@ -14,6 +12,7 @@ from sqlalchemy import select
 from app.models.channel import TelegramChannel
 from app.models.post import Post
 from app.services.monitoring.metrics_collector import increment_daily_stat
+from app.services.content.rdp_post_builder import fit_rdp_caption, rdp_caption_utf16_length
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -24,7 +23,7 @@ _FILE_MARKER = "FILE:"
 
 _userbot_manager = None
 
-MAX_CAPTION_LENGTH = 1020
+MAX_CAPTION_LENGTH = 1024
 MAX_TEXT_LENGTH    = 4090
 
 _URL_SEPARATOR = "|||"
@@ -162,23 +161,6 @@ def _split_body_and_hashtags(content: str) -> tuple[str, str]:
     if len(parts) == 2 and parts[1].strip().startswith("#"):
         return parts[0], "\n\n" + parts[1].strip()
     return content, ""
-
-
-def _html_utf16_length(content: str) -> int:
-    visible_text = unescape(re.sub(r"<[^>]*>", "", content))
-    return len(visible_text.encode("utf-16-le")) // 2
-
-
-def _split_rdp_caption(content: str, max_length: int) -> tuple[str, str]:
-    """Keep the full RDP post while respecting Telegram's photo-caption limit."""
-    if _html_utf16_length(content) <= max_length:
-        return content, ""
-
-    marker = "\n\n🚀 Connect: "
-    caption, separator, continuation = content.partition(marker)
-    if not separator or _html_utf16_length(caption) > max_length:
-        raise ValueError("RDP post cannot be split safely within Telegram caption limit")
-    return caption, "🚀 Connect: " + continuation
 
 
 def _build_post_text(
@@ -529,13 +511,20 @@ async def publish_post(
                     media_file_name = "video.mp4" if media_is_video else "image.jpg"
 
             if media_bytes:
-                caption_continuation = ""
+                compacted_chars = 0
                 if post.content_type == "challenge":
                     caption = content[:MAX_CAPTION_LENGTH]
                 elif post.content_type == "rdp":
-                    caption, caption_continuation = _split_rdp_caption(
+                    caption, compacted_chars = fit_rdp_caption(
                         content, MAX_CAPTION_LENGTH
                     )
+                    if compacted_chars:
+                        logger.info(
+                            "rdp_caption_decorations_compacted",
+                            channel_id=str(channel_id),
+                            characters_removed=compacted_chars,
+                            caption_utf16_length=rdp_caption_utf16_length(caption),
+                        )
                 else:
                     caption = _build_post_text(content, channel.username, MAX_CAPTION_LENGTH)
                 file_obj = io.BytesIO(media_bytes)
@@ -563,19 +552,14 @@ async def publish_post(
                         parse_mode=post_parse_mode,
                     )
                 await _add_contact_button(channel.telegram_channel_id, msg.id)
-                continuation_message_id = None
-                if caption_continuation:
-                    continuation_msg = await _send_with_flood_retry(
-                        client.send_message,
-                        channel.telegram_channel_id,
-                        caption_continuation,
-                        parse_mode="html",
-                    )
-                    continuation_message_id = continuation_msg.id
+                if post.content_type == "rdp":
                     logger.info(
-                        "rdp_post_caption_continuation_sent",
+                        "rdp_post_single_message_sent",
                         channel_id=str(channel_id),
-                        msg_id=continuation_message_id,
+                        msg_id=msg.id,
+                        caption_utf16_length=rdp_caption_utf16_length(caption),
+                        has_image=True,
+                        followup_message=False,
                     )
                 results[str(channel_id)] = {
                     "status": "published",
@@ -583,8 +567,6 @@ async def publish_post(
                     "has_media": True,
                     "media_type": "video" if media_is_video else "image",
                 }
-                if continuation_message_id is not None:
-                    results[str(channel_id)]["continuation_message_id"] = continuation_message_id
                 media_sent = True
                 logger.info(
                     "post_published_with_media",

@@ -1,6 +1,7 @@
 """Build the approved, fixed-layout free RDP/VPS channel post."""
+import re
 from datetime import datetime
-from html import escape
+from html import escape, unescape
 from zoneinfo import ZoneInfo
 
 TEHRAN = ZoneInfo("Asia/Tehran")
@@ -22,6 +23,43 @@ def _channel_link(username: str | None) -> str:
 def _now_parts() -> tuple[str, str]:
     now = datetime.now(TEHRAN)
     return now.strftime("%d %b %Y"), now.strftime("%H:%M")
+
+
+def rdp_caption_utf16_length(content: str) -> int:
+    """Return the caption length Telegram measures after HTML entities are parsed."""
+    visible_text = unescape(re.sub(r"<[^>]*>", "", content))
+    return len(visible_text.encode("utf-16-le")) // 2
+
+
+def fit_rdp_caption(content: str, max_length: int = 1024) -> tuple[str, int]:
+    """Keep an RDP post intact in one photo caption, compacting only divider rules."""
+    current_length = rdp_caption_utf16_length(content)
+    if current_length <= max_length:
+        return content, 0
+
+    lines = content.split("\n")
+    removed = 0
+    while current_length > max_length:
+        candidates = [
+            index
+            for index, line in enumerate(lines)
+            if len(line) > 18
+            and line[0] in {"═", "─"}
+            and all(char == line[0] for char in line)
+        ]
+        if not candidates:
+            break
+        index = max(candidates, key=lambda item: len(lines[item]))
+        lines[index] = lines[index][:-1]
+        current_length -= 1
+        removed += 1
+
+    if current_length > max_length:
+        raise ValueError(
+            f"RDP post exceeds Telegram's single-photo caption limit "
+            f"({current_length}/{max_length} UTF-16 units)"
+        )
+    return "\n".join(lines), removed
 
 
 def build_rdp_post(
