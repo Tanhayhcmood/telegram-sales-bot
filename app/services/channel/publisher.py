@@ -1,4 +1,6 @@
 import io
+import re
+from html import unescape
 import os
 import random
 import hashlib
@@ -160,6 +162,23 @@ def _split_body_and_hashtags(content: str) -> tuple[str, str]:
     if len(parts) == 2 and parts[1].strip().startswith("#"):
         return parts[0], "\n\n" + parts[1].strip()
     return content, ""
+
+
+def _html_utf16_length(content: str) -> int:
+    visible_text = unescape(re.sub(r"<[^>]*>", "", content))
+    return len(visible_text.encode("utf-16-le")) // 2
+
+
+def _split_rdp_caption(content: str, max_length: int) -> tuple[str, str]:
+    """Keep the full RDP post while respecting Telegram's photo-caption limit."""
+    if _html_utf16_length(content) <= max_length:
+        return content, ""
+
+    marker = "\n\n🚀 Connect: "
+    caption, separator, continuation = content.partition(marker)
+    if not separator or _html_utf16_length(caption) > max_length:
+        raise ValueError("RDP post cannot be split safely within Telegram caption limit")
+    return caption, "🚀 Connect: " + continuation
 
 
 def _build_post_text(
@@ -510,14 +529,22 @@ async def publish_post(
                     media_file_name = "video.mp4" if media_is_video else "image.jpg"
 
             if media_bytes:
-                caption = (
-                    content[:MAX_CAPTION_LENGTH]
-                    if post.content_type == "challenge"
-                    else _build_post_text(content, channel.username, MAX_CAPTION_LENGTH)
-                )
+                caption_continuation = ""
+                if post.content_type == "challenge":
+                    caption = content[:MAX_CAPTION_LENGTH]
+                elif post.content_type == "rdp":
+                    caption, caption_continuation = _split_rdp_caption(
+                        content, MAX_CAPTION_LENGTH
+                    )
+                else:
+                    caption = _build_post_text(content, channel.username, MAX_CAPTION_LENGTH)
                 file_obj = io.BytesIO(media_bytes)
                 file_obj.name = media_file_name
-                post_parse_mode = None if post.content_type == "challenge" else "md"
+                post_parse_mode = (
+                    None if post.content_type == "challenge"
+                    else "html" if post.content_type == "rdp"
+                    else "md"
+                )
                 if media_is_video:
                     msg = await _send_with_flood_retry(
                         client.send_file,
@@ -536,12 +563,28 @@ async def publish_post(
                         parse_mode=post_parse_mode,
                     )
                 await _add_contact_button(channel.telegram_channel_id, msg.id)
+                continuation_message_id = None
+                if caption_continuation:
+                    continuation_msg = await _send_with_flood_retry(
+                        client.send_message,
+                        channel.telegram_channel_id,
+                        caption_continuation,
+                        parse_mode="html",
+                    )
+                    continuation_message_id = continuation_msg.id
+                    logger.info(
+                        "rdp_post_caption_continuation_sent",
+                        channel_id=str(channel_id),
+                        msg_id=continuation_message_id,
+                    )
                 results[str(channel_id)] = {
                     "status": "published",
                     "message_id": msg.id,
                     "has_media": True,
                     "media_type": "video" if media_is_video else "image",
                 }
+                if continuation_message_id is not None:
+                    results[str(channel_id)]["continuation_message_id"] = continuation_message_id
                 media_sent = True
                 logger.info(
                     "post_published_with_media",
@@ -573,7 +616,11 @@ async def publish_post(
                     if post.content_type == "challenge"
                     else _build_post_text(content, channel.username, MAX_TEXT_LENGTH)
                 )
-                post_parse_mode = None if post.content_type == "challenge" else "md"
+                post_parse_mode = (
+                    None if post.content_type == "challenge"
+                    else "html" if post.content_type == "rdp"
+                    else "md"
+                )
                 msg = await _send_with_flood_retry(
                     client.send_message,
                     channel.telegram_channel_id,
