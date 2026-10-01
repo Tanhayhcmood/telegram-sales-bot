@@ -79,6 +79,7 @@ def control_kb() -> InlineKeyboardMarkup:
     builder.button(text="📡 Scan Channels", callback_data="ctrl_scan_channels")
     builder.button(text="🚀 پست فوری همه کانال‌ها", callback_data="ctrl_post_now")
     builder.button(text="🖥 پست سرور رایگان فوری", callback_data="ctrl_rdp_post_now")
+    builder.button(text="🧪 تست تک‌پیامی → @freeserver11", callback_data="ctrl_rdp_test_freeserver11")
     builder.button(text="🖼 پیش‌نمایش تصویر RDP", callback_data="ctrl_rdp_preview_image")
     builder.button(text="📋 پست پلن‌های RDP", callback_data="ctrl_rdp_plans_post")
     builder.button(text="🔁 Reset Cooldowns", callback_data="ctrl_reset_cooldowns")

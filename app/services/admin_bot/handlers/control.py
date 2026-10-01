@@ -2,7 +2,7 @@ from aiogram import Router, F, Bot
 from aiogram.types import BufferedInputFile, Message, CallbackQuery
 from aiogram.filters import Command
 from app.services.admin_bot.keyboards import control_kb, back_kb
-from app.cache.redis_client import cache_set, cache_get
+from app.cache.redis_client import cache_set, cache_get, cache_delete
 from app.core.logging import get_logger
 import asyncio
 import random
@@ -11,6 +11,9 @@ router = Router()
 logger = get_logger(__name__)
 
 _userbot_manager = None
+_RDP_TEST_TARGET = "@freeserver11"
+_RDP_TEST_CACHE_KEY = "admin:rdp_format_test:freeserver11"
+_RDP_TEST_LOCK = asyncio.Lock()
 
 
 def set_userbot_manager(manager) -> None:
@@ -271,6 +274,123 @@ async def _bg_post_now(status_msg) -> None:
             )
         except Exception:
             pass
+
+
+@router.callback_query(F.data == "ctrl_rdp_test_freeserver11")
+async def ctrl_rdp_test_freeserver11(callback: CallbackQuery):
+    """Send one fake RDP-format sample only to the chosen test channel."""
+    if not _userbot_manager:
+        await callback.answer("UserBot manager unavailable.", show_alert=True)
+        return
+
+    status_msg = await callback.message.answer(
+        f"🧪 Preparing a clearly labelled fake-data test for {_RDP_TEST_TARGET}...",
+        reply_markup=back_kb(),
+    )
+    async with _RDP_TEST_LOCK:
+        if await cache_get(_RDP_TEST_CACHE_KEY):
+            await status_msg.edit_text(
+                f"The one-time test for {_RDP_TEST_TARGET} was already attempted. "
+                "It is locked to prevent duplicate posts.",
+                reply_markup=back_kb(),
+            )
+            await callback.answer("This one-time test is already locked.", show_alert=True)
+            return
+        await cache_set(_RDP_TEST_CACHE_KEY, "sending", ttl=600)
+
+    await callback.answer()
+    asyncio.create_task(_bg_rdp_format_test(status_msg))
+
+
+async def _bg_rdp_format_test(status_msg) -> None:
+    sent = False
+    send_attempted = False
+    file_obj = None
+    try:
+        import io
+        from pathlib import Path
+        from app.services.content.rdp_post_builder import (
+            build_rdp_test_caption,
+            fit_rdp_caption,
+            rdp_caption_utf16_length,
+        )
+        from app.services.content.desktop_image_generator import generate_desktop_image
+
+        accounts = _userbot_manager.list_accounts() if _userbot_manager else []
+        connected = [account for account in accounts if account.get("is_connected")]
+        if not connected:
+            raise RuntimeError("No connected UserBot account is available.")
+        userbot = _userbot_manager.get_client(connected[0]["account_id"])
+        if userbot is None or not userbot.client.is_connected:
+            raise RuntimeError("The selected UserBot account is not connected.")
+
+        image_path = await asyncio.wait_for(
+            generate_desktop_image("Windows VPS desktop preview for a TEST-ONLY sample"),
+            timeout=90.0,
+        )
+        if not image_path:
+            raise RuntimeError("Test image generation returned no image.")
+        image_bytes = Path(image_path).read_bytes()
+        if not image_bytes:
+            raise RuntimeError("Test image is empty.")
+
+        caption, _ = fit_rdp_caption(build_rdp_test_caption(_RDP_TEST_TARGET), 1024)
+        file_obj = io.BytesIO(image_bytes)
+        file_obj.name = "rdp-format-test.png"
+        send_attempted = True
+        sent_message = await userbot.client.send_file(
+            _RDP_TEST_TARGET,
+            file_obj,
+            caption=caption,
+            parse_mode="html",
+        )
+        sent = True
+        try:
+            await cache_set(_RDP_TEST_CACHE_KEY, "sent", ttl=86400 * 30)
+        except Exception as cache_error:
+            logger.error("admin_rdp_test_lock_update_failed", error=str(cache_error)[:120])
+        logger.info(
+            "admin_rdp_format_test_sent",
+            target=_RDP_TEST_TARGET,
+            message_id=getattr(sent_message, "id", None),
+            single_message=True,
+            has_image=True,
+            caption_utf16_length=rdp_caption_utf16_length(caption),
+            fake_data=True,
+        )
+        await status_msg.edit_text(
+            f"✅ One fake-data photo post was sent to {_RDP_TEST_TARGET}. "
+            "It was sent as a single image with its complete caption.",
+            reply_markup=back_kb(),
+        )
+    except Exception as exc:
+        if send_attempted:
+            try:
+                await cache_set(_RDP_TEST_CACHE_KEY, "sent_or_unknown", ttl=86400 * 30)
+            except Exception:
+                pass
+        else:
+            try:
+                await cache_delete(_RDP_TEST_CACHE_KEY)
+            except Exception:
+                pass
+        logger.error(
+            "admin_rdp_format_test_failed",
+            target=_RDP_TEST_TARGET,
+            send_attempted=send_attempted,
+            error=str(exc)[:160],
+        )
+        try:
+            await status_msg.edit_text(
+                f"❌ Test send failed or could not be confirmed. It only targets "
+                f"{_RDP_TEST_TARGET}; no other channels were targeted.",
+                reply_markup=back_kb(),
+            )
+        except Exception:
+            pass
+    finally:
+        if file_obj is not None:
+            file_obj.close()
 
 
 @router.callback_query(F.data == "ctrl_rdp_post_now")

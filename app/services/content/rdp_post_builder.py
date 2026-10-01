@@ -116,3 +116,18 @@ def build_rdp_post(
         f"<b>⚡ Instant purchase 24/7 from Telegram admin {admin_link}</b>"
     )
     return text, RDP_BANNER_IMAGE
+
+
+def build_rdp_test_caption(channel_username: str | None = None) -> str:
+    """Build a clearly labelled sample post with reserved fake server details."""
+    text, _ = build_rdp_post(
+        ip="203.0.113.42",
+        port=3389,
+        username=FIXED_USERNAME,
+        password="TEST-ONLY-NOT-A-REAL-LOGIN",
+        country_name="TEST DATA",
+        country_flag="🧪",
+        seed=0,
+        channel_username=channel_username,
+    )
+    return "🧪 TEST ONLY — NOT A REAL SERVER\n\n" + text
