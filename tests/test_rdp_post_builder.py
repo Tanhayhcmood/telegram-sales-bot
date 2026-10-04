@@ -23,13 +23,12 @@ class RdpPostBuilderTests(unittest.TestCase):
         values.update(overrides)
         return build_rdp_post(**values)
 
-    def test_approved_copy_and_clickable_site_label(self):
+    def test_approved_copy_excludes_site_promotions(self):
         post, image = self.build()
         self.assertTrue(post.startswith("🔥 FREE RDP • FREE VPS • WINDOWS RDP • CLOUD VPS 🔥\n"))
         self.assertEqual(image, "GENERATE_VPS_DESKTOP")
-        site = '<b>🌐 Buy directly from the site : <a href="https://vps24h-website.onrender.com/">VPS24H.COM</a></b>'
-        self.assertEqual(post.count(site), 2)
-        self.assertIn("VPS24H.COM", post)
+        self.assertNotIn("Buy directly from the site", post)
+        self.assertNotIn("VPS24H.COM", post)
         self.assertIn("📍 🌐 Unknown · Port 3389", post)
         self.assertIn("every ~6 hours", post)
         self.assertIn("<b>⚡ Instant purchase 24/7 from Telegram admin <a href=\"https://t.me/VPS24H\">@VPS24H</a></b>", post)
@@ -85,7 +84,8 @@ class RdpPostBuilderTests(unittest.TestCase):
         self.assertIn("203.0.113.42", fitted)
         self.assertIn("TEST-ONLY-NOT-A-REAL-LOGIN", fitted)
         self.assertIn('<a href="https://t.me/freeserver11">channel</a>', fitted)
-        self.assertIn('href="https://vps24h-website.onrender.com/"', fitted)
+        self.assertNotIn("Buy directly from the site", fitted)
+        self.assertNotIn("VPS24H.COM", fitted)
 
 
 if __name__ == "__main__":
