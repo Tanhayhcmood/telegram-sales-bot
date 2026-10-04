@@ -34,6 +34,8 @@ class RdpPostBuilderTests(unittest.TestCase):
         self.assertIn("<b>⚡ Instant purchase 24/7 from Telegram admin <a href=\"https://t.me/VPS24H\">@VPS24H</a></b>", post)
         admin_cta = '<b>⚡ Instant purchase 24/7 from Telegram admin <a href="https://t.me/VPS24H">@VPS24H</a></b>'
         self.assertEqual(post.count(admin_cta), 2)
+        self.assertIn("──────────────────────────────\n🚀 Connect", post)
+        self.assertIn("📌 Save this post · Share with friends!\n════════", post)
 
     def test_only_server_fields_change_and_channel_link_is_scoped(self):
         post, _ = self.build(ip="198.51.100.24", password="p<&ss", country_name="Germany", country_flag="🇩🇪")
