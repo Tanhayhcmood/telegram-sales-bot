@@ -23,16 +23,19 @@ class RdpPostBuilderTests(unittest.TestCase):
         values.update(overrides)
         return build_rdp_post(**values)
 
-    def test_approved_copy_and_clickable_site_label(self):
+    def test_approved_copy_excludes_site_promotions(self):
         post, image = self.build()
         self.assertTrue(post.startswith("🔥 FREE RDP • FREE VPS • WINDOWS RDP • CLOUD VPS 🔥\n"))
         self.assertEqual(image, "GENERATE_VPS_DESKTOP")
-        site = '<b>🌐 Buy directly from the site : <a href="https://vps24h-website.onrender.com/">VPS24H.COM</a></b>'
-        self.assertEqual(post.count(site), 2)
-        self.assertIn("VPS24H.COM", post)
+        self.assertNotIn("Buy directly from the site", post)
+        self.assertNotIn("VPS24H.COM", post)
         self.assertIn("📍 🌐 Unknown · Port 3389", post)
         self.assertIn("every ~6 hours", post)
         self.assertIn("<b>⚡ Instant purchase 24/7 from Telegram admin <a href=\"https://t.me/VPS24H\">@VPS24H</a></b>", post)
+        admin_cta = '<b>⚡ Instant purchase 24/7 from Telegram admin <a href="https://t.me/VPS24H">@VPS24H</a></b>'
+        self.assertEqual(post.count(admin_cta), 2)
+        self.assertIn("──────────────────────────────\n🚀 Connect", post)
+        self.assertIn("📌 Save this post · Share with friends!\n════════", post)
 
     def test_only_server_fields_change_and_channel_link_is_scoped(self):
         post, _ = self.build(ip="198.51.100.24", password="p<&ss", country_name="Germany", country_flag="🇩🇪")
@@ -55,7 +58,7 @@ class RdpPostBuilderTests(unittest.TestCase):
     def test_long_fake_details_compact_only_divider_rules(self):
         post, _ = self.build(
             ip="255.255.255.255",
-            password="FAKE-TEST-ONLY-PASSWORD-1234",
+            password="FAKE-TEST-ONLY-PASSWORD-1234" + "X" * 50,
             country_name="United Arab Emirates",
             country_flag="🇦🇪",
         )
@@ -85,7 +88,8 @@ class RdpPostBuilderTests(unittest.TestCase):
         self.assertIn("203.0.113.42", fitted)
         self.assertIn("TEST-ONLY-NOT-A-REAL-LOGIN", fitted)
         self.assertIn('<a href="https://t.me/freeserver11">channel</a>', fitted)
-        self.assertIn('href="https://vps24h-website.onrender.com/"', fitted)
+        self.assertNotIn("Buy directly from the site", fitted)
+        self.assertNotIn("VPS24H.COM", fitted)
 
 
 if __name__ == "__main__":
