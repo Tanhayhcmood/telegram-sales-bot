@@ -104,10 +104,10 @@ def build_rdp_post(
         "⏳  Can’t connect? A fresh server is posted here\n"
         "    every ~6 hours — stay tuned.\n"
         f"🔔  Follow this {channel_link} · Be first in line.\n"
-        "──────────────────────────────\n\n"
+        "──────────────────────────────\n"
         "🚀 Connect: mstsc → paste IP → login\n"
         "✅ Works on PC · Mac · Android · \n\n"
-        "📌 Save this post · Share with friends!\n\n"
+        "📌 Save this post · Share with friends!\n"
         "═══════════════════════════════════\n"
         f"<b>⚡ Instant purchase 24/7 from Telegram admin {admin_link}</b>"
     )
