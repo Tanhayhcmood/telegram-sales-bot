@@ -87,6 +87,8 @@ def build_rdp_post(
     text = (
         "🔥 FREE RDP • FREE VPS • WINDOWS RDP • CLOUD VPS 🔥\n"
         "═══════════════════════════════════\n"
+        f"<b>⚡ Instant purchase 24/7 from Telegram admin {admin_link}</b>\n"
+        "═══════════════════════════════════\n"
         "📡 Live server drop — free access for everyone\n"
         "🔓 Full admin rights · Windows Server\n"
         f"📍 🌐 {location} · Port {safe_port}\n\n"
