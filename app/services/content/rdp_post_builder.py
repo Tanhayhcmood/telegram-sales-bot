@@ -6,7 +6,6 @@ from zoneinfo import ZoneInfo
 
 TEHRAN = ZoneInfo("Asia/Tehran")
 FIXED_USERNAME = "Administrator"
-SITE_URL = "https://vps24h-website.onrender.com/"
 ADMIN_URL = "https://t.me/VPS24H"
 
 # The publisher resolves this marker to a fresh Playwright screenshot.
@@ -83,13 +82,10 @@ def build_rdp_post(
     else:
         location = f"{escape(country_flag)} {escape(country_name)}".strip()
     channel_link = _channel_link(channel_username)
-    site_link = f'<a href="{SITE_URL}">VPS24H.COM</a>'
     admin_link = f'<a href="{ADMIN_URL}">@VPS24H</a>'
 
     text = (
         "🔥 FREE RDP • FREE VPS • WINDOWS RDP • CLOUD VPS 🔥\n"
-        "═══════════════════════════════════\n"
-        f"<b>🌐 Buy directly from the site : {site_link}</b>\n"
         "═══════════════════════════════════\n"
         "📡 Live server drop — free access for everyone\n"
         "🔓 Full admin rights · Windows Server\n"
@@ -110,8 +106,6 @@ def build_rdp_post(
         "🚀 Connect: mstsc → paste IP → login\n"
         "✅ Works on PC · Mac · Android · \n\n"
         "📌 Save this post · Share with friends!\n\n"
-        "═══════════════════════════════════\n"
-        f"<b>🌐 Buy directly from the site : {site_link}</b>\n"
         "═══════════════════════════════════\n"
         f"<b>⚡ Instant purchase 24/7 from Telegram admin {admin_link}</b>"
     )
