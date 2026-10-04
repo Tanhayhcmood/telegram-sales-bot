@@ -54,7 +54,7 @@ class RdpPostBuilderTests(unittest.TestCase):
     def test_long_fake_details_compact_only_divider_rules(self):
         post, _ = self.build(
             ip="255.255.255.255",
-            password="FAKE-TEST-ONLY-PASSWORD-1234",
+            password="FAKE-TEST-ONLY-PASSWORD-1234" + "X" * 132,
             country_name="United Arab Emirates",
             country_flag="🇦🇪",
         )
