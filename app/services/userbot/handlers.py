@@ -22,7 +22,7 @@ from app.services.sales.direct_questions import (
     get_direct_sales_reply,
     has_customer_context_hint,
 )
-from app.services.sales.payment import get_payment_reply, is_payment_only_request
+from app.services.sales.payment import get_payment_reply, split_payment_message
 from app.services.sales.quick_support import get_quick_support_reply
 from app.services.sales.order_flow import (
     extract_plan,
@@ -419,15 +419,13 @@ async def _handle_private_message(
             if is_payment_problem_message(text)
             else None
         )
-        payment_reply = get_payment_reply(
-            text,
-            language,
-            None,
-            history,
+        # Payment requests are deterministic: never route them through the model.
+        # Support/status/receipt questions retain priority over the wallet list.
+        payment_reply = (
+            None
+            if quick_support_reply or order_status_reply or payment_problem_reply
+            else get_payment_reply(text, language, None, history)
         )
-        # Support intent wins over generic words such as "how much" or
-        # "payment"; otherwise a delivery-time question can be mistaken for a
-        # plan-price or payment-method question.
         direct_reply = (
             None if quick_support_reply else (
                 order_status_reply
@@ -438,25 +436,15 @@ async def _handle_private_message(
         discount_reply = None if quick_support_reply else get_discount_reply(text, history, language)
         payment_method = payment_method_for_message(text)
         selected_plan = order_state.get("plan") or extract_plan(text, history)
-        if payment_reply:
-            payment_stage = "payment_pending" if payment_method else "payment_method_selection"
+        if payment_reply and payment_method:
             order_state = update_order_state(
                 customer,
-                payment_stage,
+                "payment_pending",
                 plan=selected_plan,
                 payment_method=payment_method,
             )
-            if payment_method:
-                payment_reply = (
-                    f"{payment_reply}\n\n"
-                    f"{get_payment_next_step(language, order_state.get('plan'))}"
-                )
-        payment_only = bool(
-            payment_reply
-            and (is_payment_only_request(text) or payment_method is not None)
-        )
-        payment_addendum = None if payment_only else payment_reply
-        if payment_only:
+        payment_addendum = None
+        if payment_reply:
             direct_reply = payment_reply
         elif discount_reply and direct_reply:
             direct_reply = f"{direct_reply}\n\n{discount_reply}"
@@ -464,7 +452,7 @@ async def _handle_private_message(
             direct_reply = discount_reply
         if quick_support_reply:
             direct_reply = quick_support_reply
-        elif direct_reply and selected_plan and order_state.get("stage") in {
+        elif not payment_reply and direct_reply and selected_plan and order_state.get("stage") in {
             None,
             "",
             "discovery",
@@ -653,7 +641,7 @@ async def _handle_private_message(
         if payment_addendum:
             reply = f"{reply.rstrip()}\n\n{payment_addendum}"
 
-        if not validate_reply(
+        if not payment_reply and not validate_reply(
             reply,
             language,
             payment_allowed=bool(payment_reply),
@@ -687,7 +675,11 @@ async def _handle_private_message(
         await session.commit()
 
     try:
-        await event.reply(reply, parse_mode="md")
+        if payment_reply and reply == payment_reply:
+            for payment_part in split_payment_message(payment_reply):
+                await event.reply(payment_part, parse_mode="html")
+        else:
+            await event.reply(reply, parse_mode="md")
         await increment_daily_stat("messages_sent")
         logger.info(
             "reply_sent",

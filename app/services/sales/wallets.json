@@ -1,0 +1,77 @@
+{
+  "currencies": [
+    {
+      "key": "BTC",
+      "currency": "BTC",
+      "name": "Bitcoin (BTC)",
+      "network": "Bitcoin",
+      "emoji": "🟡",
+      "address": "bc1qe4u06ttrj9c37lmlkv7rks6h7tyttwe2sfwffe"
+    },
+    {
+      "key": "ETH",
+      "currency": "ETH",
+      "name": "Ethereum (ETH)",
+      "network": "Ethereum (ERC20)",
+      "emoji": "🔵",
+      "address": "0xab96D9Ba2545b5BB6076A649117C5120019062Ba"
+    },
+    {
+      "key": "USDT_TRC20",
+      "currency": "USDT",
+      "name": "Tether (USDT)",
+      "network": "TRC20 (Tron)",
+      "emoji": "🟢",
+      "address": "TEaoA6zo6oytwpEUe6P3EmuoXB128dReiJ"
+    },
+    {
+      "key": "USDT_ERC20",
+      "currency": "USDT",
+      "name": "Tether (USDT)",
+      "network": "ERC20 (Ethereum)",
+      "emoji": "🔵",
+      "address": "0xab96D9Ba2545b5BB6076A649117C5120019062Ba"
+    },
+    {
+      "key": "USDT_BEP20",
+      "currency": "USDT",
+      "name": "Tether (USDT)",
+      "network": "BEP20 (BNB Smart Chain)",
+      "emoji": "🟡",
+      "address": "0xab96D9Ba2545b5BB6076A649117C5120019062Ba"
+    },
+    {
+      "key": "BNB",
+      "currency": "BNB",
+      "name": "BNB",
+      "network": "BNB Smart Chain (BEP20)",
+      "emoji": "🟡",
+      "address": "0xab96D9Ba2545b5BB6076A649117C5120019062Ba"
+    },
+    {
+      "key": "SOL",
+      "currency": "SOL",
+      "name": "Solana (SOL)",
+      "network": "Solana",
+      "emoji": "🟣",
+      "address": "8jSniP1vRF6sb11TrwUEQ7L6DVpjLfWCXqDegDoX3hDQ"
+    },
+    {
+      "key": "XRP",
+      "currency": "XRP",
+      "name": "XRP",
+      "network": "XRP Ledger",
+      "emoji": "⚫",
+      "address": "rf9m6F9t3m52gQXnTdwZyLvdXbWWopzsmv",
+      "destination_tag_required": false
+    },
+    {
+      "key": "TRX",
+      "currency": "TRX",
+      "name": "TRON (TRX)",
+      "network": "TRON (TRC20)",
+      "emoji": "🔴",
+      "address": "TEaoA6zo6oytwpEUe6P3EmuoXB128dReiJ"
+    }
+  ]
+}

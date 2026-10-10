@@ -24,11 +24,19 @@ class SalesPromptRulesTests(unittest.TestCase):
         self.assertIn("selected response mode is English", prompt)
         self.assertNotIn("selected response mode is Dutch", prompt)
 
-    def test_payment_policy_requires_explicit_intent_and_coin_selection(self):
+    def test_payment_policy_defers_wallet_answers_to_deterministic_code(self):
         prompt = get_system_prompt("en")
 
         self.assertIn("Never send a wallet address just because the customer likes a plan", prompt)
-        self.assertIn("ask which cryptocurrency they prefer", prompt)
+        self.assertIn("do not answer payment questions yourself", prompt)
+        self.assertIn("application is sending the fixed payment list now", prompt)
+        self.assertNotIn("ask which cryptocurrency they prefer", prompt)
+
+    def test_persian_prompt_never_writes_wallet_or_payment_details(self):
+        prompt = get_system_prompt("fa")
+
+        self.assertIn("درباره آدرس کیف پول و روش پرداخت خودت جواب نده", prompt)
+        self.assertIn("الان لیست پرداخت را می‌فرستم", prompt)
 
 
 if __name__ == "__main__":
