@@ -66,6 +66,74 @@ def _contains_any(text: str, phrases: Iterable[str]) -> bool:
     return any(phrase in text for phrase in phrases)
 
 
+def _is_free_server_request(text: str) -> bool:
+    """Catch free-server requests without confusing them with free setup."""
+    normalized = _normalized(text)
+    server_pattern = r"(?:\bvps\b|\bservers?\b|سرور)"
+    free_pattern = r"(?:\bfree(?:\s+of\s+charge)?\b|\bgratis\b|\bno\s+cost\b|\bwithout\s+cost\b|رایگان(?:ه)?|مجانی(?:ه)?)"
+    setup_terms = ("setup", "installation", "deployment", "راه اندازی", "راهاندازی", "نصب")
+
+    patterns = (
+        rf"{server_pattern}.{{0,40}}{free_pattern}",
+        rf"{free_pattern}.{{0,40}}{server_pattern}",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized):
+            nearby_context = normalized[max(0, match.start() - 24):match.end() + 24]
+            if not any(term in nearby_context for term in setup_terms):
+                return True
+    return False
+
+
+_FREE_SERVER_BANDWIDTH_FA = {
+    "ENTRY LEVEL": "۱ گیگابیت بر ثانیه",
+    "POWER": "۲ گیگابیت بر ثانیه",
+    "ELITE": "۲ گیگابیت بر ثانیه",
+    "ULTRA": "۵ گیگابیت بر ثانیه",
+}
+
+_FREE_SERVER_CATALOG_EN = (
+    ("ENTRY LEVEL", "4 vCPU, 8 GB RAM, 120 GB SSD, 1 Gbps", "$11/month (discounted)"),
+    ("POWER", "6 vCPU, 16 GB RAM, 250 GB SSD, 2 Gbps", "$20/month (discounted)"),
+    ("ELITE", "8 vCPU, 32 GB RAM, 500 GB SSD, 2 Gbps", "$31/month (discounted)"),
+    ("ULTRA", "12 vCPU, 64 GB RAM, 1 TB SSD, 5 Gbps", "current price by quote"),
+)
+
+
+def get_free_server_reply(text: str, language: str) -> str | None:
+    """Return a fixed, catalog-backed answer for free-server inquiries."""
+    if not _is_free_server_request(text):
+        return None
+
+    if language == "fa":
+        plan_lines = []
+        for plan_name in PLAN_ORDER:
+            plan = _FA_PLAN_DETAILS[plan_name]
+            plan_lines.append(
+                f"• {plan_name} — {plan['specs']}، "
+                f"{_FREE_SERVER_BANDWIDTH_FA[plan_name]}؛ {plan['price']}."
+            )
+        return (
+            "ممنون از پیامتون 🌷 سرورهای رایگان فقط از طریق کانال اعلام می‌شن؛ "
+            "سرورهای شخصی رایگان نیستند و این پلن‌ها با خرید ارائه می‌شن.\n\n"
+            "مشخصات پلن‌های سرور شخصی:\n"
+            + "\n".join(plan_lines)
+            + "\n\nاگر بفرمایید برای چه کاری می‌خواید، مناسب‌ترین پلن رو پیشنهاد می‌دم."
+        )
+
+    plan_lines = [
+        f"• {name} — {specs}; {price}."
+        for name, specs, price in _FREE_SERVER_CATALOG_EN
+    ]
+    return (
+        "Thanks for asking. Free server offers are announced only in our channel. "
+        "We do not provide private servers for free; these plans are paid.\n\n"
+        "Current private-server options:\n"
+        + "\n".join(plan_lines)
+        + "\n\nTell me what you plan to use it for, and I’ll suggest the best fit."
+    )
+
+
 def _direct_question_kind(text: str) -> str | None:
     normalized = _normalized(text)
 
@@ -325,6 +393,10 @@ def get_direct_sales_reply(
     language: str,
 ) -> str | None:
     """Return a direct Persian plan answer, or None for normal LLM handling."""
+    free_server_reply = get_free_server_reply(text, language)
+    if free_server_reply:
+        return free_server_reply
+
     # These fixed answers are Persian by design. Any other language must go
     # through the language-aware model prompt instead of receiving Persian.
     if language != "fa":
