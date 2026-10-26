@@ -22,7 +22,12 @@ from app.services.sales.direct_questions import (
     get_direct_sales_reply,
     has_customer_context_hint,
 )
-from app.services.sales.payment import get_payment_reply, split_payment_message
+from app.services.sales.payment import (
+    get_payment_reply,
+    is_payment_only_request,
+    is_purchase_intent,
+    split_payment_message,
+)
 from app.services.sales.quick_support import get_quick_support_reply
 from app.services.sales.order_flow import (
     extract_plan,
@@ -426,6 +431,8 @@ async def _handle_private_message(
             if quick_support_reply or order_status_reply or payment_problem_reply
             else get_payment_reply(text, language, None, history)
         )
+        payment_only = bool(payment_reply and is_payment_only_request(text, history))
+        payment_address_sent = bool(payment_reply and "<code>" in payment_reply)
         direct_reply = (
             None if quick_support_reply else (
                 order_status_reply
@@ -436,15 +443,21 @@ async def _handle_private_message(
         discount_reply = None if quick_support_reply else get_discount_reply(text, history, language)
         payment_method = payment_method_for_message(text)
         selected_plan = order_state.get("plan") or extract_plan(text, history)
-        if payment_reply and payment_method:
+        if payment_address_sent and payment_method:
             order_state = update_order_state(
                 customer,
                 "payment_pending",
                 plan=selected_plan,
                 payment_method=payment_method,
             )
-        payment_addendum = None
-        if payment_reply:
+        elif payment_reply and is_purchase_intent(text):
+            order_state = update_order_state(
+                customer,
+                "payment_method_selection",
+                plan=selected_plan,
+            )
+        payment_addendum = payment_reply if payment_reply and not payment_only else None
+        if payment_reply and payment_only:
             direct_reply = payment_reply
         elif discount_reply and direct_reply:
             direct_reply = f"{direct_reply}\n\n{discount_reply}"
@@ -464,7 +477,7 @@ async def _handle_private_message(
                 plan=selected_plan,
             )
 
-        if payment_method and payment_reply:
+        if payment_address_sent and payment_method:
             await schedule_followup(session, customer.id, stage="day_1")
 
         # Deterministic answers should not wait for a second AI request. The
@@ -481,7 +494,7 @@ async def _handle_private_message(
                 "team_size": None,
                 "competitor_mentioned": None,
                 "objection_type": "none",
-                "purchase_readiness": "ready_to_buy" if payment_reply else "exploring",
+                "purchase_readiness": "ready_to_buy" if is_purchase_intent(text) or payment_address_sent else "exploring",
             }
         else:
             try:
@@ -638,22 +651,18 @@ async def _handle_private_message(
             logger.error("ai_failed_using_fallback", user_id=user_id, error=str(ai_err))
             reply = _fallback_reply(language, user_id, text)
 
+        if not payment_reply or payment_addendum:
+            if not validate_reply(reply, language, payment_allowed=False):
+                logger.warning(
+                    "reply_validation_failed",
+                    user_id=user_id,
+                    language=language,
+                    payment_allowed=False,
+                )
+                reply = _fallback_reply(language, user_id, text)
+
         if payment_addendum:
             reply = f"{reply.rstrip()}\n\n{payment_addendum}"
-
-        if not payment_reply and not validate_reply(
-            reply,
-            language,
-            payment_allowed=bool(payment_reply),
-        ):
-            logger.warning(
-                "reply_validation_failed",
-                user_id=user_id,
-                language=language,
-                payment_allowed=bool(payment_reply),
-            )
-            safe_reply = _fallback_reply(language, user_id, text)
-            reply = f"{safe_reply}\n\n{payment_addendum}" if payment_addendum else safe_reply
 
         await save_message(
             session, conv.id, None, "outbound", reply,
@@ -675,7 +684,14 @@ async def _handle_private_message(
         await session.commit()
 
     try:
-        if payment_reply and reply == payment_reply:
+        if payment_addendum:
+            separator = f"\n\n{payment_addendum}"
+            customer_reply = reply[:-len(separator)].rstrip() if reply.endswith(separator) else reply
+            if customer_reply:
+                await event.reply(customer_reply, parse_mode="md")
+            for payment_part in split_payment_message(payment_addendum):
+                await event.reply(payment_part, parse_mode="html")
+        elif payment_reply and reply == payment_reply:
             for payment_part in split_payment_message(payment_reply):
                 await event.reply(payment_part, parse_mode="html")
         else:

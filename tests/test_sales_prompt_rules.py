@@ -8,7 +8,7 @@ class SalesPromptRulesTests(unittest.TestCase):
         prompt = get_system_prompt("fa", is_first_reply=False)
 
         self.assertIn("You are Sara", prompt)
-        self.assertIn("answer naturally in", prompt)
+        self.assertIn("answer naturally and honestly", prompt)
         self.assertIn("Do not greet again", prompt)
 
     def test_customer_context_skips_discovery(self):
@@ -32,19 +32,21 @@ class SalesPromptRulesTests(unittest.TestCase):
         self.assertIn("show all four plans for this question", prompt)
         self.assertIn("ULTRA is quote-only", prompt)
 
-    def test_payment_policy_defers_wallet_answers_to_deterministic_code(self):
+    def test_payment_policy_requires_explicit_address_or_checkout_choice(self):
         prompt = get_system_prompt("en")
 
-        self.assertIn("Never send a wallet address just because the customer likes a plan", prompt)
-        self.assertIn("do not answer payment questions yourself", prompt)
-        self.assertIn("application is sending the fixed payment list now", prompt)
-        self.assertNotIn("ask which cryptocurrency they prefer", prompt)
+        self.assertIn("A price, plan, or specification question never starts checkout", prompt)
+        self.assertIn("A general payment-method question gets supported methods only", prompt)
+        self.assertIn("Send only the matching configured address", prompt)
+        self.assertIn("do not send addresses yet", prompt)
+        self.assertIn("A price question is informational", prompt)
 
-    def test_persian_prompt_never_writes_wallet_or_payment_details(self):
+    def test_persian_prompt_keeps_price_and_specs_separate_from_wallets(self):
         prompt = get_system_prompt("fa")
 
-        self.assertIn("درباره آدرس کیف پول و روش پرداخت خودت جواب نده", prompt)
-        self.assertIn("الان لیست پرداخت را می‌فرستم", prompt)
+        self.assertIn("قیمت‌پرسیدن، پرسیدن مشخصات یا نام‌بردن از یک پلن به معنی آمادگی خرید نیست", prompt)
+        self.assertIn("آدرس فقط بعد از درخواست صریح آدرس", prompt)
+        self.assertIn("قیمت‌پرسیدن", prompt)
 
 
 if __name__ == "__main__":

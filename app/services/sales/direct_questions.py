@@ -439,4 +439,16 @@ def get_direct_sales_reply(
         previous = PLAN_ORDER[current_index - 1]
         return _compare_line(current, previous)
 
+    if kind == "price":
+        plan = _plan_details(current)
+        price = plan["price"]
+        if price == "قیمت با استعلام":
+            answer = f"قیمت {plan['label']} با استعلام اعلام می‌شه."
+        else:
+            answer = f"قیمت {plan['label']}: {price}."
+        normalized = _normalized(text)
+        if _contains_any(normalized, ("مشخصات", "spec", "specs", "specification", "رم", "هسته", "ssd", "cpu", "ram")):
+            return f"{answer} {_plan_line(current)}"
+        return answer
+
     return f"قیمت {current} {_plan_details(current)['price']} است. {_plan_line(current)}"

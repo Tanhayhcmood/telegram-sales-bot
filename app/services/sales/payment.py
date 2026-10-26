@@ -114,21 +114,46 @@ _UNSUPPORTED_CURRENCIES = (
     ("TON", ("toncoin", "ton", "تون کوین", "تون‌کوین")),
     ("XMR", ("monero", "xmr", "مونرو")),
 )
-_PAYMENT_INTENT_TERMS = (
-    "پرداخت", "پرداخت کنم", "واریز", "واریز کنم", "پول بدم", "پول بدهم",
-    "بدم", "بده", "بفرست", "آدرس کیف پول", "آدرس ولت", "کیف پول",
-    "کیفپول", "ولت", "روش پرداخت", "نحوه پرداخت", "رمزارز", "ارز دیجیتال",
-    "کریپتو", "wallet", "payment", "pay", "pay with", "crypto", "cryptocurrency",
-    "payment method", "wallet address", "address", "آدرس", "send", "send money",
-    "money", "transfer", "deposit",
+_PAYMENT_METHOD_QUESTION_TERMS = (
+    "روش پرداخت", "روش‌های پرداخت", "روش های پرداخت", "نحوه پرداخت", "چطور پرداخت", "چطوری پرداخت",
+    "چه ارزهایی قبول", "چه رمزارزهایی", "چه ارز دیجیتالی", "ارزهای پشتیبانی‌شده",
+    "what payment methods", "payment method", "payment options", "what cryptocurrencies",
+    "which cryptocurrencies", "what crypto", "which crypto", "what coins", "supported cryptocurrencies",
+    "all payment methods", "all payment options",
 )
-_DIRECT_PAYMENT_PHRASES = (
-    "روش پرداخت", "نحوه پرداخت", "چطور پرداخت", "چطوری پرداخت", "چطوری پول",
-    "آدرس کیف پول", "آدرس ولت", "آدرس پرداخت", "میخوام پرداخت", "می خواهم پرداخت",
-    "میخوام واریز", "می خوام واریز", "آدرس رو بده", "آدرس را بده", "آدرس بفرست",
-    "how can i pay", "how do i pay", "payment method", "wallet address",
-    "send me the address", "where do i send", "i want to pay", "i'd like to pay",
-    "i would like to pay", "i want to make a payment", "how to pay",
+_ADDRESS_REQUEST_PHRASES = (
+    "آدرس کیف پول", "آدرس ولت", "آدرس پرداخت", "کیف پول بده", "آدرس رو بده", "آدرس را بده",
+    "آدرس بفرست", "آدرس رو بفرست", "آدرس را بفرست", "send me the address", "give me the address",
+    "send the address", "wallet address", "payment address", "send me my address",
+)
+_PURCHASE_INTENT_PHRASES = (
+    "میخوام بخرم", "می‌خوام بخرم", "می خواهم بخرم", "میخوام خرید کنم", "می خوام خرید کنم",
+    "میخوام سفارش بدم", "می خوام سفارش بدم", "می‌خوام سفارش بدم", "همین پلن رو میخوام",
+    "همینو میخوام", "میخوام پرداخت کنم", "می خوام پرداخت کنم", "می‌خوام پرداخت کنم",
+    "میخوام واریز کنم", "می خوام واریز کنم", "می‌خوام واریز کنم",
+    "آماده پرداخت", "آماده‌ام پرداخت کنم", "قصد خرید دارم",
+    "i want to buy", "i'd like to buy", "i would like to buy", "i want to purchase",
+    "i'd like to purchase", "i want this plan", "i want the plan", "i want to order",
+    "place my order", "i'll buy", "ill buy", "i will buy", "i want to pay", "i'd like to pay",
+    "i would like to pay", "i will pay", "i'll pay", "ready to buy", "ready to pay",
+    "i'm ready to pay", "im ready to pay", "let me pay",
+)
+_PAYMENT_ACTION_PHRASES = (
+    "چطوری پول بدم", "چطور پول بدم", "چطوری پرداخت کنم", "چطور پرداخت کنم",
+    "how can i pay", "how do i pay", "how to pay", "can i pay with", "pay with", "pay in",
+    "payment address", "payment method",
+)
+_CURRENCY_PAYMENT_CONTEXT = (
+    "پرداخت", "واریز", "بدم", "بده", "payment", "pay", "wallet", "address", "آدرس",
+)
+_PAYMENT_SELECTION_CUES = (
+    "کدوم رمزارز", "کدام رمزارز", "کدوم ارز", "کدام ارز", "کدوم شبکه", "کدام شبکه",
+    "which cryptocurrency", "which crypto", "which currency", "which network", "which usdt network",
+)
+_NON_PAYMENT_QUESTION_HINTS = (
+    "قیمت", "هزینه", "تعرفه", "چنده", "چقدره", "تخفیف", "مشخصات", "چند هسته", "هسته", "رم",
+    "قیمتش", "قیمت پلن", "price", "cost", "how much", "discount", "spec", "specs", "specification",
+    "cpu", "ram", "ssd", "cores", "delivery", "activation", "activate", "how long", "when will",
 )
 
 
@@ -140,33 +165,94 @@ def _unsupported_currency(text: str) -> str | None:
     return None
 
 
+def _has_purchase_intent(text: str) -> bool:
+    normalized = _normalize(text)
+    if _has_any(normalized, _PURCHASE_INTENT_PHRASES):
+        return True
+    # "I want to send/pay" is only a purchase cue when the customer names a
+    # supported currency; the bare Persian phrase can mean many other things.
+    return bool(
+        _requested_method(normalized)
+        and _has_any(normalized, ("میخوام بدم", "می خوام بدم", "می خواهم بدم"))
+    )
+
+
+def is_purchase_intent(text: str) -> bool:
+    """Return True only when the latest message clearly commits to buying or paying."""
+    return _has_purchase_intent(text)
+
+
+def _has_address_request(text: str) -> bool:
+    normalized = _normalize(text)
+    if _has_any(normalized, _ADDRESS_REQUEST_PHRASES):
+        return True
+    return bool(_requested_method(normalized) and _has_any(normalized, ("address", "آدرس")))
+
+
+def _has_payment_method_question(text: str) -> bool:
+    return _has_any(_normalize(text), _PAYMENT_METHOD_QUESTION_TERMS)
+
+
 def _has_payment_intent(text: str, history: list[dict] | None = None) -> bool:
     normalized = _normalize(text)
     if re.search(r"(?:^|\s)/pay(?:@[a-z0-9_]+)?(?:$|\s)", normalized):
         return True
-    if _has_any(normalized, _DIRECT_PAYMENT_PHRASES):
+    if _has_address_request(normalized) or _has_payment_method_question(normalized):
         return True
-    if _has_any(normalized, _PAYMENT_INTENT_TERMS):
+    if _has_purchase_intent(normalized) or _has_any(normalized, _PAYMENT_ACTION_PHRASES):
         return True
 
     method = _requested_method(normalized)
     unsupported = _unsupported_currency(normalized)
     if method or unsupported:
-        # A short coin-only reply is a payment choice only when the bot was
-        # already discussing payment; otherwise keep the normal conversation.
+        if _has_any(normalized, _CURRENCY_PAYMENT_CONTEXT):
+            return True
         last_assistant = next(
             (m.get("content", "") for m in reversed(history or []) if m.get("role") == "assistant"),
             "",
         )
-        previous = _normalize(last_assistant)
-        if any(term in previous for term in ("پرداخت", "payment", "pay", "wallet", "روش پرداخت")):
+        if _has_any(_normalize(last_assistant), _PAYMENT_SELECTION_CUES):
             return True
     return False
 
 
-def is_payment_only_request(text: str) -> bool:
-    """Compatibility helper: explicit payment requests are handled in code."""
-    return _has_payment_intent(text)
+def is_payment_only_request(text: str, history: list[dict] | None = None) -> bool:
+    """True when payment is the only topic; mixed product questions stay on the answer path."""
+    normalized = _normalize(text)
+    if not _has_payment_intent(text, history):
+        return False
+    return not _has_any(normalized, _NON_PAYMENT_QUESTION_HINTS)
+
+
+def _payment_options_reply(language: str) -> str:
+    if language == "fa":
+        return (
+            "برای پرداخت BTC، ETH، USDT، BNB، SOL، XRP و TRX رو پشتیبانی می‌کنیم. "
+            "کدوم ارز و شبکه برات مناسبه؟ بعدش فقط آدرس همون رو می‌فرستم."
+        )
+    return (
+        "✅ We accept payment in these cryptocurrencies: BTC • ETH • USDT • BNB • SOL • XRP • TRX. "
+        "Which currency and network would you like to use? I’ll send only that address."
+    )
+
+
+def _supported_currency_reply(method: str, language: str) -> str:
+    labels = {
+        "BTC": "Bitcoin (BTC)", "ETH": "Ethereum (ETH)", "USDT": "USDT",
+        "USDT_TRC20": "USDT on TRC20", "USDT_ERC20": "USDT on ERC20",
+        "USDT_BEP20": "USDT on BEP20", "BNB": "BNB", "SOL": "Solana (SOL)",
+        "XRP": "XRP", "TRX": "TRON (TRX)",
+    }
+    label = labels.get(method, method)
+    if language == "fa":
+        return f"{label} رو پشتیبانی می‌کنیم؛ اگر خواستی پرداخت کنی، بگو تا فقط آدرس همین روش رو بفرستم."
+    return f"{label} is supported. If you’d like to pay with it, say so and I’ll send only that address."
+
+
+def _usdt_network_reply(language: str) -> str:
+    if language == "fa":
+        return "USDT روی شبکه‌های TRC20، ERC20 و BEP20 پشتیبانی می‌شه. کدوم شبکه رو می‌خوای؟ بعدش فقط آدرس همون شبکه رو می‌فرستم."
+    return "USDT is supported on TRC20, ERC20, and BEP20. Which network would you like? I’ll send only that network’s address."
 
 
 def _rows_for_method(method: str) -> list[dict]:
@@ -230,21 +316,40 @@ def get_payment_reply(
     purchase_readiness: str | None = None,
     history: list[dict] | None = None,
 ) -> str | None:
-    """Return a deterministic HTML payment response, or None for other topics."""
-    del purchase_readiness  # A classifier/model guess never triggers payment.
+    """Return a fixed payment response only after an explicit payment step."""
+    del purchase_readiness  # Classifier guesses never authorize wallet disclosure.
     if is_delivery_question(text) or not _has_payment_intent(text, history):
         return None
 
     language = "fa" if language == "fa" else "en"
+    normalized = _normalize(text)
+    if re.search(r"(?:^|\s)/pay(?:@[a-z0-9_]+)?(?:$|\s)", normalized):
+        return PAYMENT_MESSAGE if language == "fa" else PAYMENT_MESSAGE_EN
+
     unsupported = _unsupported_currency(text)
+    method = _requested_method(text)
     if unsupported:
         supported = _SUPPORTED_LIST_FA if language == "fa" else _SUPPORTED_LIST_EN
         if language == "fa":
-            return f"این ارز را فعلاً نداریم.\n{supported}\nبرای دیدن آدرس‌ها /pay را بزن"
-        return f"We don't support {unsupported} right now.\n{supported}\nSend /pay to see the addresses."
+            return f"این ارز را فعلاً نداریم. {supported}"
+        return f"We don't support {unsupported} right now. {supported}"
 
-    method = _requested_method(text)
-    if method:
+    address_requested = _has_address_request(text)
+    purchase_intent = _has_purchase_intent(text)
+    selection_followup = False
+    if method and history:
+        last_assistant = next(
+            (m.get("content", "") for m in reversed(history) if m.get("role") == "assistant"),
+            "",
+        )
+        selection_followup = _has_any(_normalize(last_assistant), _PAYMENT_SELECTION_CUES)
+
+    if method == "USDT" and (address_requested or purchase_intent or selection_followup):
+        return _usdt_network_reply(language)
+    if method and (address_requested or purchase_intent or selection_followup):
         return _build_wallet_message(_rows_for_method(method), language, include_intro=False)
-
-    return PAYMENT_MESSAGE if language == "fa" else PAYMENT_MESSAGE_EN
+    if address_requested or purchase_intent or _has_payment_method_question(text) or _has_any(normalized, _PAYMENT_ACTION_PHRASES):
+        return _payment_options_reply(language)
+    if method:
+        return _supported_currency_reply(method, language)
+    return None
