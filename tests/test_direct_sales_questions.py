@@ -1,5 +1,6 @@
 import unittest
 
+from app.services.ai.response_validation import validate_reply
 from app.services.sales.direct_questions import (
     get_discount_reply,
     get_direct_sales_reply,
@@ -90,6 +91,7 @@ class DirectSalesQuestionsTests(unittest.TestCase):
     def test_free_server_question_returns_channel_policy_and_all_paid_vps_specs(self):
         reply = get_direct_sales_reply("سرور شخصی هم رایگان هست؟", [], "fa")
 
+        self.assertTrue(validate_reply(reply, "fa"))
         self.assertIn("سرورهای رایگان فقط از طریق کانال", reply)
         self.assertIn("سرورهای شخصی رایگان نیستند", reply)
         for plan in ("ENTRY LEVEL", "POWER", "ELITE", "ULTRA"):
@@ -102,6 +104,7 @@ class DirectSalesQuestionsTests(unittest.TestCase):
     def test_free_server_question_is_deterministic_in_english_too(self):
         reply = get_direct_sales_reply("Do you offer a free private server?", [], "en")
 
+        self.assertTrue(validate_reply(reply, "en"))
         self.assertIn("Free server offers are announced only in our channel", reply)
         self.assertIn("We do not provide private servers for free", reply)
         for plan in ("ENTRY LEVEL", "POWER", "ELITE", "ULTRA"):
