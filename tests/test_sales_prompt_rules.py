@@ -30,7 +30,8 @@ class SalesPromptRulesTests(unittest.TestCase):
         self.assertIn("Free server offers are announced only in the channel", prompt)
         self.assertIn("never claim or imply that a private server is free", prompt)
         self.assertIn("show all four plans for this question", prompt)
-        self.assertIn("ULTRA is quote-only", prompt)
+        self.assertIn("ULTRA is $45/month", prompt)
+        self.assertNotIn("ULTRA is quote-only", prompt)
 
     def test_payment_policy_defers_wallet_answers_to_deterministic_code(self):
         prompt = get_system_prompt("en")

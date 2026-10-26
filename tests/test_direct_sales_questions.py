@@ -1,6 +1,7 @@
 import unittest
 
 from app.services.ai.response_validation import validate_reply
+from app.services.sales.recommender import get_all_plans_summary
 from app.services.sales.direct_questions import (
     get_discount_reply,
     get_direct_sales_reply,
@@ -61,6 +62,28 @@ class DirectSalesQuestionsTests(unittest.TestCase):
         self.assertIn("بالاترین پلنه", reply)
         self.assertNotIn("برای چه کاری", reply)
 
+    def test_ultra_price_is_45_everywhere_in_direct_sales(self):
+        reply = get_direct_sales_reply("قیمت ULTRA چنده؟", [], "fa")
+
+        self.assertIn("۴۵ دلار در ماه", reply)
+        self.assertNotIn("استعلام", reply)
+
+    def test_ultra_discount_question_still_states_the_45_dollar_price(self):
+        reply = get_discount_reply(
+            "تخفیف ULTRA چقدره؟",
+            [{"role": "assistant", "content": "ULTRA"}],
+            "fa",
+        )
+
+        self.assertIn("۴۵ دلاره", reply)
+        self.assertIn("تخفیف", reply)
+        self.assertNotIn("استعلام", reply)
+
+    def test_ultra_price_in_plan_summary_is_45(self):
+        ultra = next(plan for plan in get_all_plans_summary()["vps"] if plan["name"] == "ULTRA")
+
+        self.assertEqual(ultra["price"], 45)
+
     def test_history_keeps_previous_turns_for_follow_up(self):
         reply = get_direct_sales_reply(
             "پلن بعدیش چیه؟",
@@ -97,7 +120,7 @@ class DirectSalesQuestionsTests(unittest.TestCase):
         for plan in ("ENTRY LEVEL", "POWER", "ELITE", "ULTRA"):
             with self.subTest(plan=plan):
                 self.assertIn(plan, reply)
-        for detail in ("۱۲۰ گیگ SSD", "۸ گیگ رم", "۱ گیگابیت", "۱۶ گیگ رم", "۲۵۰ گیگ SSD", "۳۲ گیگ رم", "۵۰۰ گیگ SSD", "۶۴ گیگ رم", "۱ ترابایت SSD", "۵ گیگابیت", "۱۱ دلار", "۲۰ دلار", "۳۱ دلار", "قیمت با استعلام"):
+        for detail in ("۱۲۰ گیگ SSD", "۸ گیگ رم", "۱ گیگابیت", "۱۶ گیگ رم", "۲۵۰ گیگ SSD", "۳۲ گیگ رم", "۵۰۰ گیگ SSD", "۶۴ گیگ رم", "۱ ترابایت SSD", "۵ گیگابیت", "۱۱ دلار", "۲۰ دلار", "۳۱ دلار", "۴۵ دلار در ماه"):
             with self.subTest(detail=detail):
                 self.assertIn(detail, reply)
 
@@ -113,7 +136,7 @@ class DirectSalesQuestionsTests(unittest.TestCase):
         self.assertIn("$11/month", reply)
         self.assertIn("$20/month", reply)
         self.assertIn("$31/month", reply)
-        self.assertIn("current price by quote", reply)
+        self.assertIn("$45/month", reply)
 
     def test_free_setup_question_is_not_mistaken_for_a_free_server_offer(self):
         reply = get_direct_sales_reply("Is setup free for this VPS?", [], "en")

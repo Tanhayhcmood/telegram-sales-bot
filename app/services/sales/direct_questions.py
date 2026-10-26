@@ -42,7 +42,7 @@ _FA_PLAN_DETAILS = {
     "ULTRA": {
         "label": "ULTRA",
         "specs": "۱۲ هسته، ۶۴ گیگ رم و ۱ ترابایت SSD",
-        "price": "قیمت با استعلام",
+        "price": "۴۵ دلار در ماه",
         "benefit": "بالاترین گزینه برای پروژه‌های حرفه‌ای و پرترافیک",
     },
 }
@@ -96,7 +96,7 @@ _FREE_SERVER_CATALOG_EN = (
     ("ENTRY LEVEL", "4 vCPU, 8 GB RAM, 120 GB SSD, 1 Gbps", "$11/month (discounted)"),
     ("POWER", "6 vCPU, 16 GB RAM, 250 GB SSD, 2 Gbps", "$20/month (discounted)"),
     ("ELITE", "8 vCPU, 32 GB RAM, 500 GB SSD, 2 Gbps", "$31/month (discounted)"),
-    ("ULTRA", "12 vCPU, 64 GB RAM, 1 TB SSD, 5 Gbps", "current price by quote"),
+    ("ULTRA", "12 vCPU, 64 GB RAM, 1 TB SSD, 5 Gbps", "$45/month"),
 )
 
 
@@ -358,8 +358,8 @@ def get_discount_reply(
     plan_name = _current_plan(history) or (_plans_in_text(text) or ["POWER"])[0]
     if plan_name == "ULTRA":
         if language == "fa" or re.search(r"[\u0600-\u06ff]", text or ""):
-            return "قیمت ULTRA با استعلام اعلام می‌شه؛ تخفیف فعلیش رو باید از تیم بررسی کنم."
-        return "ULTRA is quote-based, so I need to confirm its current discount with the team."
+            return "قیمت ULTRA ماهی ۴۵ دلاره؛ اگر منظورت تخفیفه، اون رو جداگانه از تیم تأیید می‌کنم."
+        return "ULTRA is $45/month. If you mean a discount, I’ll confirm whether one is available."
 
     regular, current, savings = _DISCOUNT_DETAILS[plan_name]
     if language == "fa":
