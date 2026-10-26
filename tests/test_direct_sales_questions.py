@@ -51,6 +51,16 @@ class DirectSalesQuestionsTests(unittest.TestCase):
 
         self.assertIn("POWER نسبت به ENTRY", reply)
 
+    def test_price_question_is_answered_directly_without_specs_or_payment_copy(self):
+        from app.services.sales.payment import get_payment_reply
+
+        reply = get_direct_sales_reply("قیمت ULTRA چنده؟", [], "fa")
+
+        self.assertTrue(reply.startswith("قیمت ULTRA"))
+        self.assertNotIn("هسته", reply)
+        self.assertNotIn("SSD", reply)
+        self.assertIsNone(get_payment_reply("قیمت ULTRA چنده؟", "fa"))
+
     def test_ultra_has_no_higher_plan(self):
         reply = get_direct_sales_reply(
             "بالاتر از این چی دارید؟",

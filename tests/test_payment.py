@@ -25,23 +25,83 @@ class PaymentTests(unittest.TestCase):
         for address in PAYMENT_ADDRESSES.values():
             self.assertIn(f"<code>{address}</code>", PAYMENT_MESSAGE)
 
-    def test_common_persian_payment_questions_return_full_fixed_list(self):
+    def test_payment_questions_and_purchase_intent_do_not_reveal_addresses_early(self):
         for text in ("روش پرداخت چیه؟", "میخوام پرداخت کنم", "چطوری پول بدم؟", "آدرس کیف پول؟"):
             with self.subTest(text=text):
-                self.assertEqual(get_payment_reply(text, "fa"), PAYMENT_MESSAGE)
+                reply = get_payment_reply(text, "fa")
+                self.assertIsNotNone(reply)
+                self.assertNotIn("<code>", reply)
+                for address in PAYMENT_ADDRESSES.values():
+                    self.assertNotIn(address, reply)
+
+    def test_price_questions_never_enter_checkout_or_send_wallets(self):
+        for text, language in (
+            ("قیمت ULTRA چنده؟", "fa"),
+            ("قیمت پلن Ultra چند است؟", "fa"),
+            ("How much is the ULTRA plan?", "en"),
+            ("What is the price of ULTRA?", "en"),
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(get_payment_reply(text, language))
+                self.assertFalse(is_payment_only_request(text))
+
+    def test_generic_payment_words_do_not_trigger_checkout(self):
+        for text in ("پرداخت", "کریپتو", "wallet", "payment", "address", "send"):
+            with self.subTest(text=text):
+                self.assertIsNone(get_payment_reply(text, "fa"))
+                self.assertFalse(is_payment_only_request(text))
+
+    def test_ambiguous_persian_want_to_give_does_not_start_checkout(self):
+        for text in ("میخوام بدم", "می‌خوام بدم"):
+            with self.subTest(text=text):
+                self.assertIsNone(get_payment_reply(text, "fa"))
+                self.assertFalse(is_payment_only_request(text))
+
+    def test_purchase_without_a_currency_asks_for_selection_not_an_address(self):
+        reply = get_payment_reply("I want to buy this plan", "en")
+        self.assertIsNotNone(reply)
+        self.assertNotIn("<code>", reply)
+        for address in PAYMENT_ADDRESSES.values():
+            self.assertNotIn(address, reply)
+
+    def test_method_question_reports_supported_options_without_addresses(self):
+        reply = get_payment_reply("What payment methods do you accept?", "en")
+        self.assertIn("BTC", reply)
+        self.assertIn("Which currency and network", reply)
+        self.assertNotIn("<code>", reply)
+
+    def test_mixed_price_and_payment_question_is_not_payment_only(self):
+        text = "How much is ULTRA, and what payment methods do you accept?"
+        self.assertIsNotNone(get_payment_reply(text, "en"))
+        self.assertFalse(is_payment_only_request(text))
+
+    def test_coin_reply_after_checkout_selection_sends_only_selected_address(self):
+        reply = get_payment_reply(
+            "Ethereum",
+            "en",
+            history=[{"role": "assistant", "content": "Which currency and network would you like to use?"}],
+        )
+        self.assertIsNotNone(reply)
+        self.assertIn(PAYMENT_ADDRESSES["ETH"], reply)
+        self.assertEqual(reply.count("<code>"), 1)
 
     def test_pay_command_returns_full_fixed_list(self):
         self.assertEqual(get_payment_reply("/pay", "fa"), PAYMENT_MESSAGE)
         self.assertEqual(get_payment_reply("/pay@SalesBot", "fa"), PAYMENT_MESSAGE)
 
-    def test_specific_usdt_request_returns_all_usdt_networks_and_pay_cta(self):
+    def test_usdt_purchase_intent_asks_for_network_before_sending_an_address(self):
         reply = get_payment_reply("USDT می‌خوام بدم", "fa")
+        self.assertIn("TRC20", reply)
+        self.assertIn("ERC20", reply)
+        self.assertIn("BEP20", reply)
+        self.assertNotIn("<code>", reply)
+
+    def test_specific_usdt_network_selection_sends_only_that_address(self):
+        reply = get_payment_reply("USDT TRC20 می‌خوام بدم", "fa")
         self.assertIn("TRC20 (Tron)", reply)
-        self.assertIn("ERC20 (Ethereum)", reply)
-        self.assertIn("BEP20 (BNB Smart Chain)", reply)
-        self.assertIn("برای دیدن بقیه ارزها /pay را بزن", reply)
-        self.assertEqual(reply.count("<code>"), 3)
-        self.assertNotIn("Bitcoin (BTC)", reply)
+        self.assertEqual(reply.count("<code>"), 1)
+        self.assertNotIn("ERC20 (Ethereum)", reply)
+        self.assertNotIn("BEP20 (BNB Smart Chain)", reply)
 
     def test_network_qualified_usdt_returns_only_that_network(self):
         reply = get_payment_reply("USDT TRC20 payment address", "en")
@@ -84,18 +144,19 @@ class PaymentTests(unittest.TestCase):
         self.assertIn("We don't support DOGE right now", reply)
         self.assertIn("BTC • ETH • USDT • BNB • SOL • XRP • TRX", reply)
 
-    def test_payment_requests_are_handled_in_code_but_other_topics_are_not(self):
-        for text in ("پرداخت", "کریپتو", "wallet", "payment", "USDT می‌خوام بدم"):
+    def test_explicit_payment_intent_is_handled_in_code_but_ambiguous_topics_are_not(self):
+        for text in ("روش پرداخت چیه؟", "میخوام پرداخت کنم", "/pay", "USDT می‌خوام بدم"):
             self.assertTrue(is_payment_only_request(text))
-        self.assertFalse(is_payment_only_request("سلام، مشخصات سرور چیه؟"))
+        for text in ("پرداخت", "کریپتو", "wallet", "payment", "سلام، مشخصات سرور چیه؟"):
+            self.assertFalse(is_payment_only_request(text))
 
     def test_delivery_question_is_not_replaced_by_wallet_list(self):
         self.assertIsNone(get_payment_reply("چقدر بعد از پرداخت سرور تحویل میدی؟", "fa"))
 
-    def test_english_payment_output_is_english_and_html(self):
+    def test_english_payment_options_stay_in_english_without_addresses(self):
         reply = get_payment_reply("What payment methods do you accept?", "en")
         self.assertIn("✅ We accept payment in these cryptocurrencies:", reply)
-        self.assertIn("<code>", reply)
+        self.assertNotIn("<code>", reply)
         self.assertNotIn("✅ ما پرداخت", reply)
 
     def test_message_splitter_keeps_every_chunk_under_telegram_limit(self):
