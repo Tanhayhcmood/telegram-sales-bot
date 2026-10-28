@@ -26,35 +26,29 @@
 
   # ── Reconcile databases created by older releases ──────────────────────────
   # Older releases called SQLAlchemy create_all() during app startup.  If that
-  # happened before Alembic ran, the schema is complete but alembic_version is
-  # missing.  The helper only stamps a schema after verifying every model table
-  # and column exists; fresh or partial databases still use normal migrations.
+  # happened before Alembic ran, stamp the verified legacy schema at the last
+  # pre-growth revision so the Growth Challenge migrations still run.
   echo "[start] Checking migration state..."
   PREPARE_STATUS=0
   python3 scripts/prepare_migrations.py || PREPARE_STATUS=$?
-  if [ "$PREPARE_STATUS" -ne 0 ] && [ "$PREPARE_STATUS" -ne 10 ]; then
+  if [ "$PREPARE_STATUS" -ne 0 ]; then
     echo "[start] ERROR: Could not prepare migration state." >&2
     exit 1
   fi
 
   # ── Run DB migrations (retry up to 3 times with back-off) ───────────────────
   MIGRATION_OK=0
-  if [ "$PREPARE_STATUS" -eq 10 ]; then
-    MIGRATION_OK=1
-    echo "[start] Legacy schema stamped at current head; no upgrade needed."
-  else
-    echo "[start] Running DB migrations..."
-    for attempt in 1 2 3; do
-      echo "[start] Migration attempt $attempt/3..."
-      if timeout 60 env -u PYTHONPATH alembic upgrade head; then
-        MIGRATION_OK=1
-        echo "[start] Migrations succeeded on attempt $attempt."
-        break
-      fi
-      echo "[start] Migration attempt $attempt failed."
-      [ "$attempt" -lt 3 ] && sleep 10
-    done
-  fi
+  echo "[start] Running DB migrations..."
+  for attempt in 1 2 3; do
+    echo "[start] Migration attempt $attempt/3..."
+    if timeout 60 env -u PYTHONPATH alembic upgrade head; then
+      MIGRATION_OK=1
+      echo "[start] Migrations succeeded on attempt $attempt."
+      break
+    fi
+    echo "[start] Migration attempt $attempt failed."
+    [ "$attempt" -lt 3 ] && sleep 10
+  done
 
   if [ "$MIGRATION_OK" -ne 1 ]; then
     echo "[start] ERROR: Migrations failed after 3 attempts; refusing to serve with an unknown schema." >&2

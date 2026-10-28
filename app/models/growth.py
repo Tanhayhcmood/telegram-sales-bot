@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,7 +28,6 @@ class GrowthRound(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="draft")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     channel_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
-    prize_types: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     published_messages: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     entries_close_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -73,6 +72,7 @@ class GrowthEntry(Base, TimestampMixin):
 
 
 class GrowthPrize(Base, TimestampMixin):
+    # Legacy table retained intact; the runtime no longer stores or allocates prizes.
     __tablename__ = "growth_prizes"
     __table_args__ = (Index("ix_growth_prize_status", "status"),)
 
@@ -98,14 +98,14 @@ class GrowthWinner(Base, TimestampMixin):
     round_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("growth_rounds.id", ondelete="CASCADE"), nullable=False
     )
-    prize_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("growth_prizes.id"), nullable=False
+    # Nullable for newly selected winners; historical prize links are preserved.
+    prize_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
     )
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    delivery_status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
-    delivery_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    delivery_log: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    delivery_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending_delivery"
+    )
     selected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

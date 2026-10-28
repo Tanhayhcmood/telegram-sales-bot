@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import html
-import json
 import random
 import re
 import uuid
@@ -10,7 +9,7 @@ from difflib import SequenceMatcher
 from typing import Awaitable, Callable
 
 from aiogram.enums import ParseMode
-from cryptography.fernet import Fernet
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
@@ -18,7 +17,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.session import AsyncSessionLocal
 from app.models.channel import TelegramChannel
-from app.models.growth import GrowthEntry, GrowthPrize, GrowthRound, GrowthWinner
+from app.models.growth import GrowthEntry, GrowthRound, GrowthWinner
 
 logger = get_logger(__name__)
 
@@ -41,6 +40,7 @@ _TEXT_STOP_WORDS = {
     "there", "these", "they", "this", "those", "through", "with", "your",
 }
 _scheduler_lock = asyncio.Lock()
+_last_scheduler_skip_by_reason: dict[str, str] = {}
 
 
 def _now() -> datetime:
@@ -94,7 +94,6 @@ async def generate_unique_challenge(
     challenge_type: str,
     history: list[str],
     bot_username: str | None = None,
-    prize_kinds: list[str] | None = None,
 ) -> tuple[str, str]:
     from app.services.ai.engine import generate_content
 
@@ -109,15 +108,11 @@ async def generate_unique_challenge(
     recent = history[-25:]
     recent_text = "\n".join(f"- {text[:700]}" for text in recent)
     proof_destination = f"@{bot_username}" if bot_username else "this bot"
-    prize_kinds = sorted(set(prize_kinds or []))
-    if len(prize_kinds) == 1:
-        prize_description = f"The prize is one {prize_kinds[0]} prize from the admin-added pool."
-    else:
-        prize_description = "The prize is one RDP or VPS prize from the admin-added pool."
     system = (
         "Write natural English copy for a Telegram channel promotion challenge. "
         "Sound like a person, not an AI or an ad template. Avoid emoji, hype, "
-        "fake urgency, repeated slogans, and filler. Never invent a prize or claim."
+        "fake urgency, repeated slogans, and filler. Do not mention prizes; the bot "
+        "adds the fixed prize line separately."
     )
     for attempt in range(1, SIMILARITY_RETRIES + 1):
         variation = random.choice(variation_prompts)
@@ -125,7 +120,6 @@ async def generate_unique_challenge(
             f"Create one fresh Growth Challenge. The action must be: "
             f"{CHALLENGE_TYPE_PROMPTS[challenge_type]}\n"
             f"Variation direction: {variation}\n"
-            f"{prize_description} Mention that prize without inventing specs, value, or extra prizes. "
             f"Tell participants to send a screenshot or forward their proof privately "
             f"to {proof_destination}. Entries close eight hours after publication. "
             "The copy must be entirely in English and clearly describe one honest action. "
@@ -190,6 +184,17 @@ def _remaining_text(deadline: datetime, now: datetime) -> str:
     return f"{minutes}m"
 
 
+def _prize_copy(round_obj: GrowthRound) -> str:
+    options = (
+        "Prize: a free RDP or VPS.",
+        "One winner will receive a free RDP or VPS.",
+        "The prize is a free RDP or VPS.",
+        "Win a free RDP or VPS.",
+    )
+    digest = hashlib.sha256(str(round_obj.id).encode("utf-8")).digest()
+    return options[digest[0] % len(options)]
+
+
 def render_round_post(
     round_obj: GrowthRound,
     entries_count: int,
@@ -214,7 +219,7 @@ def render_round_post(
         status = "This round was cancelled. Entries are closed."
     else:
         status = f"Round status: {round_obj.status}."
-    return f"{round_obj.challenge_text.strip()}\n\n{status}"
+    return f"{round_obj.challenge_text.strip()}\n\n{_prize_copy(round_obj)}\n\n{status}"
 
 
 async def publish_round_to_channels(
@@ -232,7 +237,10 @@ async def publish_round_to_channels(
         try:
             sent = await bot.send_message(
                 chat_id=channel_id,
-                text=html.escape(round_obj.challenge_text.strip(), quote=False),
+                text=html.escape(
+                    f"{round_obj.challenge_text.strip()}\n\n{_prize_copy(round_obj)}",
+                    quote=False,
+                ),
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
             )
@@ -321,34 +329,7 @@ async def start_growth_round(bot=None, now: datetime | None = None) -> dict:
 
         channels = await _target_channels(session)
         if not channels:
-            logger.error("growth_round_no_configured_channels")
             return {"status": "no_channels"}
-        prize_rows = (
-            await session.execute(
-                select(GrowthPrize.id, GrowthPrize.kind, GrowthPrize.encrypted_payload).where(
-                    GrowthPrize.status == "available"
-                )
-            )
-        ).all()
-        if not prize_rows:
-            logger.warning("growth_round_skipped_empty_prize_pool")
-            return {"status": "no_prizes"}
-        try:
-            cipher = _fernet()
-        except RuntimeError:
-            logger.error("growth_round_prize_encryption_key_unavailable")
-            return {"status": "prize_key_invalid"}
-        prize_kinds_set: set[str] = set()
-        for prize_id, kind, encrypted_payload in prize_rows:
-            try:
-                cipher.decrypt(encrypted_payload.encode("ascii"))
-                prize_kinds_set.add(kind)
-            except Exception:
-                logger.warning("growth_prize_unreadable", prize_id=str(prize_id))
-        prize_kinds = sorted(prize_kinds_set)
-        if not prize_kinds:
-            return {"status": "prize_key_invalid"}
-
         previous = await session.scalar(
             select(GrowthRound).order_by(GrowthRound.started_at.desc()).limit(1)
         )
@@ -366,14 +347,12 @@ async def start_growth_round(bot=None, now: datetime | None = None) -> dict:
     challenge_type = next_challenge_type(previous_type)
     username = await _submission_bot_username()
     if not username:
-        logger.error("growth_round_admin_bot_unavailable")
         return {"status": "admin_bot_unavailable"}
     try:
         challenge_text, challenge_hash = await generate_unique_challenge(
-            challenge_type, history, username, prize_kinds
+            challenge_type, history, username
         )
     except Exception as exc:
-        logger.error("growth_challenge_generation_failed", error=str(exc)[:240])
         return {"status": "generation_failed"}
 
     if requested_now is None:
@@ -387,7 +366,6 @@ async def start_growth_round(bot=None, now: datetime | None = None) -> dict:
         status="draft",
         is_active=True,
         channel_ids=channels,
-        prize_types=prize_kinds,
         published_messages=[],
         started_at=now,
         entries_close_at=ends_at,
@@ -614,59 +592,22 @@ async def review_growth_entry(entry_id: str, admin_id: int, approve: bool) -> di
         return result
 
 
-def _fernet() -> Fernet:
-    key = (settings.GROWTH_PRIZE_ENCRYPTION_KEY or "").strip()
-    if not key:
-        raise RuntimeError("GROWTH_PRIZE_ENCRYPTION_KEY is not configured")
-    try:
-        return Fernet(key.encode("ascii"))
-    except Exception as exc:
-        raise RuntimeError("GROWTH_PRIZE_ENCRYPTION_KEY is not a valid Fernet key") from exc
-
-
-async def add_growth_prize(kind: str, payload: str) -> dict:
-    kind = (kind or "").strip().upper()
-    payload = (payload or "").strip()
-    if kind not in {"RDP", "VPS"}:
-        return {"status": "invalid_kind"}
-    if not payload:
-        return {"status": "empty"}
-    try:
-        encrypted = _fernet().encrypt(payload.encode("utf-8")).decode("ascii")
-    except RuntimeError:
-        logger.error("growth_prize_encryption_not_configured")
-        return {"status": "encryption_not_configured"}
-    async with AsyncSessionLocal() as session:
-        prize = GrowthPrize(
-            kind=kind,
-            encrypted_payload=encrypted,
-            status="available",
-        )
-        session.add(prize)
-        await session.commit()
-        prize_id = str(prize.id)
-    logger.info("growth_prize_added", prize_id=prize_id, kind=kind)
-    return {"status": "added", "prize_id": prize_id, "kind": kind}
-
-
-async def growth_prize_pool_count() -> int:
-    async with AsyncSessionLocal() as session:
-        count = await session.scalar(
-            select(func.count(GrowthPrize.id)).where(GrowthPrize.status == "available")
-        )
-    return int(count or 0)
-
-
 async def growth_status() -> dict:
     async with AsyncSessionLocal() as session:
         round_obj = await session.scalar(
             select(GrowthRound).order_by(GrowthRound.started_at.desc()).limit(1)
         )
-        prizes = await session.scalar(
-            select(func.count(GrowthPrize.id)).where(GrowthPrize.status == "available")
+        pending_deliveries = await session.scalar(
+            select(func.count(GrowthWinner.id)).where(
+                GrowthWinner.delivery_status == "pending_delivery"
+            )
         )
         if not round_obj:
-            return {"status": "none", "prizes": int(prizes or 0)}
+            return {
+                "status": "none",
+                "pending_deliveries": int(pending_deliveries or 0),
+                "delivered_winners": 0,
+            }
         counts = await session.execute(
             select(GrowthEntry.status, func.count(GrowthEntry.id))
             .where(GrowthEntry.round_id == round_obj.id)
@@ -691,7 +632,7 @@ async def growth_status() -> dict:
             "approved": entry_counts.get("approved", 0),
             "rejected": entry_counts.get("rejected", 0),
             "delivered_winners": int(winners or 0),
-            "prizes": int(prizes or 0),
+            "pending_deliveries": int(pending_deliveries or 0),
         }
 
 
@@ -718,145 +659,129 @@ async def cancel_growth_round(bot=None) -> dict:
         return {"status": "cancelled", "round_id": str(round_obj.id)}
 
 
-async def _notify_delivery_failure(user_id: int, round_id: str, error: str) -> None:
+async def list_pending_growth_deliveries(limit: int = 50) -> list[dict]:
+    async with AsyncSessionLocal() as session:
+        winners = (
+            await session.execute(
+                select(GrowthWinner)
+                .where(GrowthWinner.delivery_status == "pending_delivery")
+                .order_by(GrowthWinner.selected_at.asc())
+                .limit(limit)
+            )
+        ).scalars().all()
+        return [
+            {
+                "id": str(winner.id),
+                "round_id": str(winner.round_id),
+                "telegram_user_id": winner.telegram_user_id,
+                "username": winner.username,
+                "selected_at": winner.selected_at,
+            }
+            for winner in winners
+        ]
+
+
+async def mark_growth_delivery_delivered(winner_id: str, admin_id: int) -> dict:
     try:
-        from app.services.admin_bot.bot import get_bot
-
-        bot = get_bot()
-    except Exception:
-        bot = None
-    if not bot:
-        logger.error(
-            "growth_prize_delivery_failed_admin_bot_unavailable",
-            user_id=user_id,
-            round_id=round_id,
-            error=error[:200],
+        winner_uuid = uuid.UUID(str(winner_id))
+    except (TypeError, ValueError, AttributeError):
+        return {"status": "invalid"}
+    async with AsyncSessionLocal() as session:
+        winner = await session.scalar(
+            select(GrowthWinner).where(GrowthWinner.id == winner_uuid).with_for_update()
         )
-        return
-    text = (
-        "Growth prize delivery failed after three attempts.\n"
-        f"Round: {round_id}\nUser ID: {user_id}\n"
-        f"Error: {error[:300]}"
+        if not winner:
+            return {"status": "missing"}
+        if winner.delivery_status == "delivered":
+            return {"status": "already_delivered", "round_id": str(winner.round_id)}
+        if winner.delivery_status != "pending_delivery":
+            return {"status": "not_pending", "round_id": str(winner.round_id)}
+        winner.delivery_status = "delivered"
+        winner.delivered_at = _now()
+        result = {
+            "status": "delivered",
+            "round_id": str(winner.round_id),
+            "telegram_user_id": winner.telegram_user_id,
+        }
+        await session.commit()
+    logger.info(
+        "growth_delivery_marked_delivered",
+        winner_id=winner_id,
+        round_id=result["round_id"],
+        user_id=result["telegram_user_id"],
+        admin_id=admin_id,
     )
-    for admin_id in settings.admin_ids:
+    return result
+
+
+async def _notify_selected_winner(winner_id: uuid.UUID, public_bot) -> None:
+    async with AsyncSessionLocal() as session:
+        winner = await session.get(GrowthWinner, winner_id)
+        if not winner:
+            return
+        user_id = winner.telegram_user_id
+        username = winner.username
+        round_id = str(winner.round_id)
+        winner_id_text = str(winner.id)
+
+    if public_bot:
         try:
-            await bot.send_message(chat_id=admin_id, text=text, parse_mode=None)
-        except Exception as exc:
-            logger.warning(
-                "growth_delivery_alert_failed",
-                admin_id=admin_id,
-                error=str(exc)[:180],
-            )
-
-
-async def _deliver_winner(winner_id: uuid.UUID) -> None:
-    exhausted_failure: tuple[int, str, str] | None = None
-    while True:
-        async with AsyncSessionLocal() as session:
-            winner = await session.scalar(
-                select(GrowthWinner).where(GrowthWinner.id == winner_id).with_for_update()
-            )
-            if not winner or winner.delivery_status != "pending":
-                return
-            if winner.delivery_attempts >= 3:
-                winner.delivery_status = "failed"
-                winner.last_error = winner.last_error or "delivery attempts exhausted"
-                prize = await session.get(GrowthPrize, winner.prize_id)
-                if prize and prize.status == "reserved":
-                    prize.status = "available"
-                    prize.reserved_round_id = None
-                    prize.reserved_at = None
-                exhausted_failure = (
-                    winner.telegram_user_id,
-                    str(winner.round_id),
-                    winner.last_error,
-                )
-                await session.commit()
-                break
-            attempt = winner.delivery_attempts + 1
-            winner.delivery_attempts = attempt
-            prize = await session.get(GrowthPrize, winner.prize_id)
-            user_id = winner.telegram_user_id
-            round_id = str(winner.round_id)
-            username = winner.username
-            encrypted_payload = prize.encrypted_payload if prize else None
-            await session.commit()
-
-        error = ""
-        try:
-            from app.services.admin_bot.bot import get_bot
-
-            delivery_bot = get_bot()
-            if not delivery_bot:
-                raise RuntimeError("admin challenge bot is unavailable")
-            if not encrypted_payload:
-                raise RuntimeError("reserved prize record is missing")
-            payload = _fernet().decrypt(encrypted_payload.encode("ascii")).decode("utf-8")
-            await delivery_bot.send_message(
+            await public_bot.send_message(
                 chat_id=user_id,
                 text=(
-                    "Congratulations — you were selected as a Growth Challenge winner.\n\n"
-                    f"Prize: {payload}"
+                    "You won this Growth Challenge. An admin will contact you soon "
+                    "to deliver your free RDP or VPS."
                 ),
                 parse_mode=None,
             )
         except Exception as exc:
-            error = str(exc)[:300]
-
-        async with AsyncSessionLocal() as session:
-            winner = await session.scalar(
-                select(GrowthWinner).where(GrowthWinner.id == winner_id).with_for_update()
+            logger.warning(
+                "growth_winner_dm_failed",
+                round_id=round_id,
+                user_id=user_id,
+                error=str(exc)[:180],
             )
-            prize = await session.get(GrowthPrize, winner.prize_id) if winner else None
-            if not winner:
-                return
-            logs = list(winner.delivery_log or [])
-            logs.append(
-                {
-                    "attempt": attempt,
-                    "at": _now().isoformat(),
-                    "status": "delivered" if not error else "failed",
-                    "error": error or None,
-                }
-            )
-            winner.delivery_log = logs
-            if not error and prize:
-                winner.delivery_status = "delivered"
-                winner.delivered_at = _now()
-                prize.status = "used"
-                prize.used_at = _now()
-                logger.info(
-                    "growth_prize_delivery_succeeded",
-                    round_id=round_id,
-                    user_id=user_id,
-                    attempt=attempt,
-                )
-            else:
-                winner.last_error = error or "reserved prize record is missing"
-                if attempt >= 3:
-                    winner.delivery_status = "failed"
-                    if prize and prize.status == "reserved":
-                        prize.status = "available"
-                        prize.reserved_round_id = None
-                        prize.reserved_at = None
-                logger.warning(
-                    "growth_prize_delivery_attempt_failed",
-                    round_id=round_id,
-                    user_id=user_id,
-                    attempt=attempt,
-                    error=winner.last_error[:200],
-                )
-            await session.commit()
-            finished = winner.delivery_status in {"delivered", "failed"}
-            final_error = winner.last_error or ""
 
-        if finished:
-            if error:
-                await _notify_delivery_failure(user_id, round_id, final_error)
-            return
-        await asyncio.sleep(2 ** (attempt - 1))
-    if exhausted_failure:
-        await _notify_delivery_failure(*exhausted_failure)
+    try:
+        from app.services.admin_bot.bot import get_bot
+
+        admin_bot = get_bot()
+    except Exception:
+        admin_bot = None
+    if not admin_bot:
+        logger.error(
+            "growth_winner_admin_notification_bot_unavailable",
+            winner_id=winner_id_text,
+            round_id=round_id,
+        )
+        return
+    winner_name = f"@{username}" if username else "no username"
+    text = "Growth Challenge winner — manual delivery pending\n"
+    text += f"Winner: {winner_name}"
+    text += f"\nTelegram ID: {user_id}\nRound ID: {round_id}"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(
+                text="Mark as delivered",
+                callback_data=f"growth:delivered:{winner_id_text}",
+            )
+        ]]
+    )
+    for admin_id in settings.admin_ids:
+        try:
+            await admin_bot.send_message(
+                chat_id=admin_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode=None,
+            )
+        except Exception as exc:
+            logger.warning(
+                "growth_winner_admin_notification_failed",
+                admin_id=admin_id,
+                winner_id=winner_id_text,
+                error=str(exc)[:180],
+            )
 
 
 async def _announce_round(round_obj: GrowthRound, public_bot) -> bool:
@@ -872,43 +797,58 @@ async def _announce_round(round_obj: GrowthRound, public_bot) -> bool:
             )
         ).all()
     if winners:
-        names = [
-            f"@{username}" if username else f"user {user_id}"
-            for user_id, username in winners
-        ]
+        username = winners[0][1]
+        winner_name = f"@{username}" if username else "the selected participant"
         announcement = (
-            "The Growth Challenge is complete. Congratulations to "
-            + ", ".join(names)
-            + ". Winners were selected from approved entries."
+            f"Growth Challenge winner: {winner_name}. "
+            "The prize is a free RDP or VPS."
         )
-    elif round_obj.last_error == "no_available_prizes":
-        announcement = "No winner was selected this round because no RDP or VPS prize was available."
+    elif round_obj.last_error == "no_approved_entries":
+        announcement = "No winner this round because no entries were approved."
     elif round_obj.last_error == "no_eligible_users":
-        announcement = "No eligible winner could be selected this round. The prize remains in the pool."
+        announcement = (
+            "No winner this round. Approved participants who won within the last "
+            "7 days were not eligible."
+        )
     else:
-        announcement = "No valid entries were approved this round. The prize remains in the pool."
+        announcement = "No winner was selected this round."
 
-    for channel_id in round_obj.channel_ids or []:
+    posts = list(round_obj.published_messages or [])
+    if not posts:
+        logger.error("growth_winner_announcement_missing_posts", round_id=str(round_obj.id))
+        return False
+    succeeded = 0
+    post_text = html.escape(
+        f"{round_obj.challenge_text.strip()}\n\n{_prize_copy(round_obj)}\n\n{announcement}",
+        quote=False,
+    )
+    for post in posts:
         try:
-            await public_bot.send_message(
-                chat_id=channel_id,
-                text=html.escape(announcement, quote=False),
+            await public_bot.edit_message_text(
+                chat_id=post["chat_id"],
+                message_id=int(post["message_id"]),
+                text=post_text,
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
             )
+            succeeded += 1
         except Exception as exc:
-            logger.error(
+            if "message is not modified" in str(exc).lower():
+                succeeded += 1
+                continue
+            logger.warning(
                 "growth_winner_announcement_failed",
                 round_id=str(round_obj.id),
-                chat_id=str(channel_id),
+                chat_id=str(post.get("chat_id")),
                 error=str(exc)[:200],
             )
-    return True
+    return succeeded == len(posts)
 
 
 async def finalize_growth_round(round_id: str | uuid.UUID, now: datetime | None = None) -> dict:
     now = now or _now()
     round_uuid = uuid.UUID(str(round_id))
+    new_winner_ids: list[uuid.UUID] = []
     async with AsyncSessionLocal() as session:
         round_obj = await session.scalar(
             select(GrowthRound).where(GrowthRound.id == round_uuid).with_for_update()
@@ -938,99 +878,46 @@ async def finalize_growth_round(round_id: str | uuid.UUID, now: datetime | None 
                     .order_by(GrowthEntry.created_at)
                 )
             ).all()
-            user_names: dict[int, str | None] = {}
-            for user_id, username in approved_users:
-                user_names.setdefault(int(user_id), username)
             recent_wins = (
                 await session.execute(
                     select(GrowthWinner.telegram_user_id).where(
-                        GrowthWinner.selected_at >= now - WIN_COOLDOWN
+                        GrowthWinner.selected_at > now - WIN_COOLDOWN
                     )
                 )
             ).scalars().all()
             blocked_users = {int(user_id) for user_id in recent_wins}
             eligible = [
-                (user_id, username)
-                for user_id, username in user_names.items()
-                if user_id not in blocked_users
+                (int(user_id), username)
+                for user_id, username in approved_users
+                if int(user_id) not in blocked_users
             ]
-            desired = 2 if approved_count >= 10 else 1
-            prizes = (
-                await session.execute(
-                    select(GrowthPrize)
-                    .where(
-                        GrowthPrize.status == "available",
-                        GrowthPrize.kind.in_(round_obj.prize_types or ("RDP", "VPS")),
-                    )
-                    .order_by(GrowthPrize.created_at)
-                    .with_for_update(skip_locked=True)
+            if approved_count == 0:
+                round_obj.final_outcome = "no_winner"
+                round_obj.last_error = "no_approved_entries"
+            elif eligible:
+                user_id, username = random.SystemRandom().choice(eligible)
+                winner = GrowthWinner(
+                    round_id=round_obj.id,
+                    telegram_user_id=user_id,
+                    username=username,
+                    delivery_status="pending_delivery",
+                    selected_at=now,
                 )
-            ).scalars().all()
-            try:
-                cipher = _fernet()
-            except RuntimeError:
-                cipher = None
-            usable_prizes: list[GrowthPrize] = []
-            for prize in prizes:
-                try:
-                    if not cipher:
-                        raise RuntimeError("prize encryption key unavailable")
-                    cipher.decrypt(prize.encrypted_payload.encode("ascii"))
-                    usable_prizes.append(prize)
-                except Exception:
-                    logger.warning("growth_prize_unreadable", prize_id=str(prize.id))
-                if len(usable_prizes) >= desired:
-                    break
-            prizes = usable_prizes
-            winner_count = min(desired, len(eligible), len(prizes))
-            if winner_count:
-                selected_users = random.SystemRandom().sample(eligible, winner_count)
-                for (user_id, username), prize in zip(selected_users, prizes):
-                    prize.status = "reserved"
-                    prize.reserved_round_id = round_obj.id
-                    prize.reserved_at = now
-                    session.add(
-                        GrowthWinner(
-                            round_id=round_obj.id,
-                            prize_id=prize.id,
-                            telegram_user_id=user_id,
-                            username=username,
-                            delivery_status="pending",
-                            delivery_attempts=0,
-                            delivery_log=[],
-                            selected_at=now,
-                        )
-                    )
+                session.add(winner)
+                await session.flush()
+                new_winner_ids.append(winner.id)
                 round_obj.final_outcome = "completed"
-                if desired == 2 and winner_count < 2:
-                    logger.warning(
-                        "growth_second_winner_unavailable",
-                        round_id=str(round_obj.id),
-                        approved_entries=approved_count,
-                        available_prizes=len(prizes),
-                        eligible_users=len(eligible),
-                    )
             else:
                 round_obj.final_outcome = "no_winner"
-                if not prizes:
-                    round_obj.last_error = "no_available_prizes"
-                else:
-                    round_obj.last_error = "no_eligible_users"
-                if approved_count == 0:
-                    round_obj.last_error = "no_approved_entries"
+                round_obj.last_error = "no_eligible_users"
             await session.commit()
         else:
             await session.commit()
-        winner_ids = (
-            await session.execute(
-                select(GrowthWinner.id).where(GrowthWinner.round_id == round_obj.id)
-            )
-        ).scalars().all()
         round_copy = round_obj
 
-    for winner_id in winner_ids:
-        await _deliver_winner(winner_id)
     public_bot = _public_bot()
+    for winner_id in new_winner_ids:
+        await _notify_selected_winner(winner_id, public_bot)
     if not round_copy.announcement_sent:
         announced = await _announce_round(round_copy, public_bot)
         if not announced:
@@ -1115,6 +1002,31 @@ async def advance_growth_schedule(now: datetime | None = None) -> dict:
     return {"status": latest.status if latest else "idle"}
 
 
+async def _log_scheduler_skip_once(result: dict) -> None:
+    reason = result.get("status")
+    if reason not in {
+        "bot_unavailable",
+        "no_channels",
+        "admin_bot_unavailable",
+        "generation_failed",
+        "publish_failed",
+    }:
+        return
+    async with AsyncSessionLocal() as session:
+        latest = await session.scalar(
+            select(GrowthRound).order_by(GrowthRound.started_at.desc()).limit(1)
+        )
+        scheduled_at = latest.next_round_at.isoformat() if latest else "initial"
+    if _last_scheduler_skip_by_reason.get(reason) == scheduled_at:
+        return
+    _last_scheduler_skip_by_reason[reason] = scheduled_at
+    logger.warning(
+        "growth_round_scheduler_skipped",
+        reason=reason,
+        scheduled_at=scheduled_at,
+    )
+
+
 async def run_growth_challenge_scheduler() -> None:
     logger.info(
         "growth_challenge_scheduler_started",
@@ -1125,7 +1037,8 @@ async def run_growth_challenge_scheduler() -> None:
     while True:
         try:
             async with _scheduler_lock:
-                await advance_growth_schedule()
+                result = await advance_growth_schedule()
+                await _log_scheduler_skip_once(result)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

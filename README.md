@@ -281,14 +281,10 @@ Admin bot commands:
 
 - `/growth_start` — start a round now if none is active
 - `/growth_cancel` — cancel the active round
-- `/growth_add_prize RDP | details` or `/growth_add_prize VPS | details` — add an encrypted prize
-- `/growth_prizes` — show the available prize count
 - `/growth_status` — show round and review counts
+- `/growth_pending_deliveries` — list winners awaiting manual delivery
+- `/growth_mark_delivered <winner-id>` — mark a delivery complete
 
-Configure `DATABASE_URL`, `ADMIN_BOT_TOKEN`, `ADMIN_TELEGRAM_IDS`, `TELEGRAM_PUBLIC_BOT_TOKEN`, and `GROWTH_PRIZE_ENCRYPTION_KEY`. The existing AI engine also needs either `GROQ_API_KEY` or `OPENAI_API_KEY`. Generate the encryption key once with:
+The prize is always a free RDP or VPS. The bot announces the winner and tells them an admin will contact them; an admin delivers the prize manually and marks it complete with the notification button or command. Each round selects one approved entry at random, and a user cannot win again within seven days. The bot does not store or send prize credentials.
 
-```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-Keep that key stable and store it as a secret. A different key cannot decrypt prizes already in the pool.
+Configure `DATABASE_URL`, `ADMIN_BOT_TOKEN`, `ADMIN_TELEGRAM_IDS`, and `TELEGRAM_PUBLIC_BOT_TOKEN`. The existing AI engine also needs either `GROQ_API_KEY` or `OPENAI_API_KEY`. The migration preserves existing `growth_*` tables and stored rows; the old prize-pool data is no longer read or changed by the app.

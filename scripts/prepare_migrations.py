@@ -73,19 +73,21 @@ def main() -> int:
         return 0
 
     print(
-        "[migrations] Complete legacy create_all schema detected without "
-        "alembic_version; stamping current head."
+        "[migrations] Complete legacy schema detected without alembic_version; "
+        "stamping the pre-growth revision so Growth Challenge migrations still run."
     )
     try:
         clean_env = os.environ.copy()
         clean_env.pop("PYTHONPATH", None)
-        subprocess.run(["alembic", "stamp", "head"], check=True, env=clean_env)
+        subprocess.run(
+            ["alembic", "stamp", "8a6b7c8d9e0f"],
+            check=True,
+            env=clean_env,
+        )
     except subprocess.CalledProcessError as exc:
         print(f"[migrations] Alembic stamp failed with exit code {exc.returncode}.", file=sys.stderr)
         return exc.returncode or 1
-    # Tell start.sh that the schema is already at head. Running upgrade again
-    # in this same startup can race with the stamp connection on Render.
-    return 10
+    return 0
 
 
 if __name__ == "__main__":
