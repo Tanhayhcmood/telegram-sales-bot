@@ -5,10 +5,10 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.growth.service import (
-    add_growth_prize,
     cancel_growth_round,
-    growth_prize_pool_count,
     growth_status,
+    list_pending_growth_deliveries,
+    mark_growth_delivery_delivered,
     refresh_growth_post,
     review_growth_entry,
     start_growth_round,
@@ -44,10 +44,6 @@ async def growth_start_command(message: Message):
         text = "No active channels or REQUIRED_CHANNELS are configured."
     elif result["status"] == "bot_unavailable":
         text = "The public challenge bot is not running. Check TELEGRAM_PUBLIC_BOT_TOKEN."
-    elif result["status"] == "no_prizes":
-        text = "Add at least one RDP or VPS prize with /growth_add_prize before starting a round."
-    elif result["status"] == "prize_key_invalid":
-        text = "The prize encryption key is missing, invalid, or cannot decrypt the available pool."
     elif result["status"] == "admin_bot_unavailable":
         text = "The admin bot is unavailable. Check ADMIN_BOT_TOKEN before starting a round."
     else:
@@ -67,47 +63,13 @@ async def growth_cancel_command(message: Message):
         await message.answer("There is no active Growth Challenge round to cancel.", parse_mode=None)
 
 
-@router.message(Command("growth_add_prize"))
-async def growth_add_prize_command(message: Message):
-    parts = (message.text or "").split(maxsplit=1)
-    if len(parts) < 2 or "|" not in parts[1]:
-        await message.answer(
-            "Usage: /growth_add_prize RDP | prize details\n"
-            "Use VPS instead of RDP for a VPS prize. Details are encrypted before storage.",
-            parse_mode=None,
-        )
-        return
-    kind, _, payload = parts[1].partition("|")
-    result = await add_growth_prize(kind, payload)
-    if result["status"] == "added":
-        await message.answer(
-            f"{result['kind']} prize added to the encrypted pool. Available prizes: "
-            f"{await growth_prize_pool_count()}.",
-            parse_mode=None,
-        )
-    elif result["status"] == "encryption_not_configured":
-        await message.answer(
-            "Prize storage is disabled until GROWTH_PRIZE_ENCRYPTION_KEY is configured.",
-            parse_mode=None,
-        )
-    elif result["status"] == "invalid_kind":
-        await message.answer("Prize type must be RDP or VPS.", parse_mode=None)
-    else:
-        await message.answer("Prize details cannot be empty.", parse_mode=None)
-
-
-@router.message(Command("growth_prizes"))
-async def growth_prizes_command(message: Message):
-    count = await growth_prize_pool_count()
-    await message.answer(f"Available encrypted prizes: {count}.", parse_mode=None)
-
-
 @router.message(Command("growth_status"))
 async def growth_status_command(message: Message):
     result = await growth_status()
     if result["status"] == "none":
         await message.answer(
-            f"No Growth Challenge rounds yet. Available prizes: {result['prizes']}.",
+            "No Growth Challenge rounds yet. The next round will publish on schedule.\n"
+            f"Pending manual deliveries: {result['pending_deliveries']}.",
             parse_mode=None,
         )
         return
@@ -122,11 +84,58 @@ async def growth_status_command(message: Message):
         f"Entries close: {closes}\n"
         f"Submitted: {result['submitted']} (pending {result['pending']}, "
         f"approved {result['approved']}, rejected {result['rejected']})\n"
-        f"Winners delivered: {result['delivered_winners']}\n"
-        f"Available prizes: {result['prizes']}\n"
+        f"Pending manual deliveries: {result['pending_deliveries']}\n"
+        f"Delivered winners: {result['delivered_winners']}\n"
         f"Next round: {next_at}",
         parse_mode=None,
     )
+
+
+@router.message(Command("growth_pending_deliveries"))
+async def growth_pending_deliveries_command(message: Message):
+    winners = await list_pending_growth_deliveries(limit=100)
+    if not winners:
+        await message.answer("There are no pending Growth Challenge deliveries.", parse_mode=None)
+        return
+    messages = []
+    lines = ["Pending Growth Challenge deliveries:"]
+    for winner in winners:
+        username = f"@{winner['username']}" if winner["username"] else "no username"
+        line = (
+            f"{username} (ID {winner['telegram_user_id']})\n"
+            f"Round: {winner['round_id']}\nWinner ID: {winner['id']}"
+        )
+        if len("\n\n".join(lines + [line])) > 3500:
+            messages.append("\n\n".join(lines))
+            lines = ["Pending Growth Challenge deliveries (continued):"]
+        lines.append(line)
+    lines.append("Mark one delivered with /growth_mark_delivered <winner-id>.")
+    messages.append("\n\n".join(lines))
+    for text in messages:
+        await message.answer(text, parse_mode=None)
+
+
+@router.message(Command("growth_mark_delivered"))
+async def growth_mark_delivered_command(message: Message):
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "Usage: /growth_mark_delivered <winner-id>",
+            parse_mode=None,
+        )
+        return
+    result = await mark_growth_delivery_delivered(parts[1].strip(), message.from_user.id)
+    if result["status"] == "delivered":
+        text = f"Winner marked delivered for round {result['round_id']}."
+    elif result["status"] == "already_delivered":
+        text = f"That winner was already marked delivered for round {result['round_id']}."
+    elif result["status"] == "missing":
+        text = "No winner matches that ID."
+    elif result["status"] == "invalid":
+        text = "Winner ID must be a valid UUID."
+    else:
+        text = "That winner is not pending manual delivery."
+    await message.answer(text, parse_mode=None)
 
 
 @router.callback_query(F.data.startswith("growth:"))
@@ -135,17 +144,34 @@ async def growth_review_callback(callback: CallbackQuery):
         await callback.answer("Admins only.", show_alert=True)
         return
     try:
-        _, decision, entry_id = callback.data.split(":", 2)
-        if decision not in {"approve", "reject"}:
+        _, action, object_id = callback.data.split(":", 2)
+        if action not in {"approve", "reject", "delivered"}:
             raise ValueError("unknown decision")
     except (AttributeError, ValueError):
-        await callback.answer("This review button is invalid.", show_alert=True)
+        await callback.answer("This Growth Challenge button is invalid.", show_alert=True)
         return
 
+    if action == "delivered":
+        result = await mark_growth_delivery_delivered(object_id, callback.from_user.id)
+        if result["status"] == "delivered":
+            await callback.answer("Delivery marked complete.")
+            if callback.message:
+                await callback.message.edit_reply_markup(reply_markup=None)
+        elif result["status"] == "already_delivered":
+            await callback.answer("This delivery was already marked complete.", show_alert=True)
+            if callback.message:
+                await callback.message.edit_reply_markup(reply_markup=None)
+        elif result["status"] == "missing":
+            await callback.answer("This winner no longer exists.", show_alert=True)
+        else:
+            await callback.answer("This delivery is not pending.", show_alert=True)
+        return
+
+    entry_id = object_id
     result = await review_growth_entry(
         entry_id,
         callback.from_user.id,
-        approve=decision == "approve",
+        approve=action == "approve",
     )
     await callback.answer(
         "Decision recorded." if result["status"] in {"approved", "rejected"}
