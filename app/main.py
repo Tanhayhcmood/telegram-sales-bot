@@ -55,7 +55,7 @@ except Exception as _e:
 _userbot_task: asyncio.Task | None = None
 _auto_poster_task: asyncio.Task | None = None
 _rdp_pool_task: asyncio.Task | None = None
-_challenge_task: asyncio.Task | None = None
+_growth_challenge_task: asyncio.Task | None = None
 _maintenance_task: asyncio.Task | None = None
 _bg_init_task: asyncio.Task | None = None
 _keep_alive_task: asyncio.Task | None = None
@@ -182,7 +182,7 @@ async def _timed(coro, name: str, timeout: float) -> bool:
 
 
 async def _background_init() -> None:
-    global _userbot_task, _auto_poster_task, _challenge_task
+    global _userbot_task, _auto_poster_task, _growth_challenge_task
 
     await _timed(init_db(), "init_db", 15.0)
 
@@ -210,13 +210,12 @@ async def _background_init() -> None:
         _startup_errors.append(f"public_bot: {e}")
 
     try:
-        # Start AFTER public_bot so get_public_bot_username() already returns
-        # the real username — the first challenge announcement link will be
-        # correct (https://t.me/<bot>?start=challenge_<slug>).
-        from app.services.challenges.service import run_challenge_scheduler
-        _challenge_task = asyncio.create_task(run_challenge_scheduler())
+        # The legacy quiz API and manual /challenge command remain available.
+        # Growth Challenge is the only automatically scheduled challenge.
+        from app.services.growth.service import run_growth_challenge_scheduler
+        _growth_challenge_task = asyncio.create_task(run_growth_challenge_scheduler())
     except Exception as e:
-        _startup_errors.append(f"challenge_scheduler: {e}")
+        _startup_errors.append(f"growth_challenge_scheduler: {e}")
 
     try:
         from app.services.channel.auto_poster import run_auto_poster
@@ -283,7 +282,7 @@ async def lifespan(app: FastAPI):
             except asyncio.CancelledError:
                 pass
 
-    for task in (_rdp_pool_task, _auto_poster_task, _userbot_task, _challenge_task):
+    for task in (_rdp_pool_task, _auto_poster_task, _userbot_task, _growth_challenge_task):
         if task:
             task.cancel()
             try:

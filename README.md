@@ -264,3 +264,31 @@ docker compose logs app --tail=100 | grep ERROR
 3. Nginx را پشت SSL/TLS قرار دهید
 4. پورت ۸۰۰۰ را در فایروال ببندید (فقط Nginx)
 5. `ADMIN_TELEGRAM_IDS` را فقط با آیدی خودتان پر کنید
+
+---
+
+## Growth Challenge
+
+Apply the database migration before enabling the scheduler:
+
+```bash
+alembic upgrade head
+```
+
+The scheduler starts one round immediately, then opens the next at each 9-hour mark. Entries close after 8 hours; admins review for the final hour. The quiz API and manual `/challenge` command remain available, but the legacy quiz scheduler is disabled.
+
+Admin bot commands:
+
+- `/growth_start` — start a round now if none is active
+- `/growth_cancel` — cancel the active round
+- `/growth_add_prize RDP | details` or `/growth_add_prize VPS | details` — add an encrypted prize
+- `/growth_prizes` — show the available prize count
+- `/growth_status` — show round and review counts
+
+Configure `DATABASE_URL`, `ADMIN_BOT_TOKEN`, `ADMIN_TELEGRAM_IDS`, `TELEGRAM_PUBLIC_BOT_TOKEN`, and `GROWTH_PRIZE_ENCRYPTION_KEY`. The existing AI engine also needs either `GROQ_API_KEY` or `OPENAI_API_KEY`. Generate the encryption key once with:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Keep that key stable and store it as a secret. A different key cannot decrypt prizes already in the pool.
