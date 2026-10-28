@@ -6,11 +6,11 @@ from asyncio import sleep
 from time import monotonic
 
 
-REPLY_DELAY_SECONDS = (4.0, 5.0)
+REPLY_DELAY_SECONDS = (30.0, 35.0)
 
 
 def new_reply_deadline() -> float:
-    """Pick a 4-5 second response deadline measured from message receipt."""
+    """Pick a 30-35 second response deadline measured from message receipt."""
     return monotonic() + random.uniform(*REPLY_DELAY_SECONDS)
 
 
