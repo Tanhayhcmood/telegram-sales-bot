@@ -75,11 +75,14 @@ class Settings(BaseSettings):
     XAI_MODEL: str = "grok-3-mini"
     XAI_IMAGE_MODEL: str = "grok-imagine-image-2.0"
 
-    CHALLENGE_AUTO_ENABLED: bool = True
+    # Legacy quiz endpoints and the manual /challenge command remain active;
+    # Growth Challenge is the only automatically scheduled challenge.
+    CHALLENGE_AUTO_ENABLED: bool = False
     CHALLENGE_INTERVAL_HOURS: int = 10
     CHALLENGE_DURATION_HOURS: int = 4
     CHALLENGE_DEFAULT_REWARD: str = "Upgrade Team reward for the winning participants"
     CHALLENGE_REFERRAL_POINTS: int = 3
+    GROWTH_PRIZE_ENCRYPTION_KEY: str = ""
 
     GROQ_API_KEY: str = ""
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"

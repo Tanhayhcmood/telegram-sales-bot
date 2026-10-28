@@ -30,6 +30,18 @@ class AdminOnlyMiddleware(BaseMiddleware):
             if cmd in _PUBLIC_COMMANDS:
                 data["admin_id"] = None
                 return await handler(event, data)
+        if isinstance(event, Message) and event.chat.type == "private":
+            has_screenshot = bool(
+                event.photo
+                or (
+                    event.document
+                    and event.document.mime_type
+                    and event.document.mime_type.startswith("image/")
+                )
+            )
+            if has_screenshot or getattr(event, "forward_origin", None):
+                data["admin_id"] = None
+                return await handler(event, data)
 
         admin_ids = settings.admin_ids
         if user.id not in admin_ids:

@@ -32,5 +32,5 @@ async def init_db() -> None:
     database with all tables present but no migration history.
     """
     from app.models import (  # noqa: F401
-        account, customer, conversation, lead, channel, post, knowledge, alert, admin, challenge, public_user
+        account, customer, conversation, lead, channel, post, knowledge, alert, admin, challenge, public_user, growth
     )
