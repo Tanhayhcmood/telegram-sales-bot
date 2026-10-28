@@ -45,6 +45,11 @@ from app.services.sales.order_flow import (
     update_order_state,
 )
 from app.services.sales.followup import mark_followup_done, schedule_followup
+from app.services.userbot.reply_timing import (
+    mark_message_read,
+    new_reply_deadline,
+    wait_for_reply_deadline,
+)
 from app.services.monitoring.metrics_collector import increment_daily_stat
 from app.cache.redis_client import cache_get, cache_set
 from app.cache.keys import CacheKeys
@@ -252,6 +257,12 @@ def _build_model_messages(
 
 
 async def handle_private_message(event, account_id: str):
+    reply_deadline = new_reply_deadline()
+    try:
+        await mark_message_read(event)
+    except Exception as error:
+        logger.warning("telegram_read_ack_failed", error=str(error))
+
     sender = await event.get_sender()
     if not sender or sender.bot:
         return
@@ -272,6 +283,7 @@ async def handle_private_message(event, account_id: str):
             sender,
             user_id,
             text,
+            reply_deadline=reply_deadline,
             has_media=has_media,
         )
 
@@ -282,6 +294,7 @@ async def _handle_private_message(
     sender,
     user_id: int,
     text: str,
+    reply_deadline: float,
     has_media: bool = False,
 ):
     inbound_content = text.strip() or "[media attachment]"
@@ -348,6 +361,7 @@ async def _handle_private_message(
                     await save_message(session, conv.id, None, "outbound", greeting_reply, ai_generated=False)
                     await session.commit()
                     try:
+                        await wait_for_reply_deadline(reply_deadline)
                         await event.reply(greeting_reply, parse_mode="md")
                         await increment_daily_stat("messages_sent")
                         logger.info("greeting_fast_reply", user_id=user_id, language=language)
@@ -395,6 +409,7 @@ async def _handle_private_message(
                 has_media,
             )
             try:
+                await wait_for_reply_deadline(reply_deadline)
                 await event.reply(receipt_reply, parse_mode="md")
                 await increment_daily_stat("messages_sent")
                 logger.info(
@@ -684,6 +699,7 @@ async def _handle_private_message(
         await session.commit()
 
     try:
+        await wait_for_reply_deadline(reply_deadline)
         if payment_addendum:
             separator = f"\n\n{payment_addendum}"
             customer_reply = reply[:-len(separator)].rstrip() if reply.endswith(separator) else reply
