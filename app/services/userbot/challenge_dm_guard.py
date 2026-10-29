@@ -157,7 +157,7 @@ async def _active_round_id() -> str:
         return "untracked"
 
 
-async def _notify_admins_once(sender, user_id: int, text: str, round_id: str) -> None
+async def _notify_admins_once(sender, user_id: int, text: str, round_id: str) -> None:
     admin_ids = settings.admin_ids
     if not admin_ids:
         logger.warning("challenge_dm_admin_notification_skipped_no_admins", user_id=user_id)
