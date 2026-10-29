@@ -2,14 +2,18 @@ import hashlib
 import json
 
 from aiogram import F, Router
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.filters import Command, CommandStart
+from aiogram.types import ChatMemberUpdated, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from sqlalchemy import select
+
+from app.db.session import AsyncSessionLocal
+from app.models.growth import GrowthRound
 
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.admin_bot.bot import get_bot as get_admin_bot
 from app.services.growth.service import (
     record_admin_notification,
-    refresh_growth_post,
     submit_growth_proof,
 )
 
@@ -149,6 +153,79 @@ async def _notify_admins(message: Message, entry: dict) -> None:
             )
 
 
+@router.message(CommandStart())
+async def growth_start(message: Message) -> None:
+    if not message.from_user or message.from_user.is_bot:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    payload = parts[1].strip() if len(parts) > 1 else ""
+    round_id = payload.removeprefix("growth_")
+    round_obj = None
+    async with AsyncSessionLocal() as session:
+        query = select(GrowthRound).where(GrowthRound.is_active.is_(True))
+        if round_id:
+            try:
+                import uuid
+                query = query.where(GrowthRound.id == uuid.UUID(round_id))
+            except ValueError:
+                await message.answer("That Growth Challenge link is invalid.", parse_mode=None)
+                return
+        round_obj = await session.scalar(query.order_by(GrowthRound.started_at.desc()).limit(1))
+    if not round_obj:
+        await message.answer("There is no active Growth Challenge for this link.", parse_mode=None)
+        return
+    await message.answer(
+        "Welcome to the Growth Challenge. Send a screenshot or forward your proof here privately. "
+        "Each person may submit up to three proofs per round. Use /leaderboard to see the top inviters.",
+        parse_mode=None,
+    )
+
+
+@router.message(Command("leaderboard"))
+async def growth_leaderboard_command(message: Message) -> None:
+    if not message.from_user or message.from_user.is_bot:
+        return
+    try:
+        from app.services.growth.publishing import growth_leaderboard
+        rows = await growth_leaderboard()
+    except Exception as exc:
+        logger.warning("growth_leaderboard_unavailable", error=str(exc)[:160])
+        rows = []
+    if not rows:
+        await message.answer("There are no verified inviters yet this round.", parse_mode=None)
+        return
+    lines = ["Growth Challenge — top inviters"]
+    for rank, row in enumerate(rows[:10], 1):
+        name = f"@{row['username']}" if row.get("username") else f"User {row['user_id']}"
+        lines.append(f"{rank}. {name} — {row['entries']} entries")
+    await message.answer("\n".join(lines), parse_mode=None)
+
+
+@router.message(Command("invite"))
+async def growth_invite_command(message: Message) -> None:
+    if not message.from_user or message.from_user.is_bot:
+        return
+    try:
+        from app.services.growth.referrals import create_growth_invite
+        link = await create_growth_invite(message.from_user.id)
+    except Exception as exc:
+        logger.warning("growth_invite_link_failed", user_id=message.from_user.id, error=str(exc)[:160])
+        link = None
+    if not link:
+        await message.answer("A personal invite link is not available for this round yet.", parse_mode=None)
+        return
+    await message.answer(f"Your personal invite link for this round:\n{link}", parse_mode=None)
+
+
+@router.chat_member()
+async def growth_chat_member_update(update: ChatMemberUpdated) -> None:
+    try:
+        from app.services.growth.referrals import record_growth_membership_update
+        await record_growth_membership_update(update)
+    except Exception as exc:
+        logger.warning("growth_membership_update_failed", error=str(exc)[:180])
+
+
 @router.message(F.chat.type == "private")
 async def receive_growth_proof(message: Message) -> None:
     if not message.from_user or message.from_user.is_bot:
@@ -191,4 +268,5 @@ async def receive_growth_proof(message: Message) -> None:
         parse_mode=None,
     )
     await _notify_admins(message, {**result, "proof_type": proof_type})
+    from app.services.growth.publishing import refresh_growth_post
     await refresh_growth_post(result["round_id"])
