@@ -81,8 +81,8 @@ PLANS = {
         },
         {
             "name": "ULTRA",
-            "price": None,
-            "original_price": None,
+            "price": 35,
+            "original_price": 38,
             "cpu": 12,
             "ram": 64,
             "disk": 1000,
