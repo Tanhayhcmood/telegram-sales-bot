@@ -1068,3 +1068,40 @@ async def cmd_ai_silenced_users(message: Message):
         chunks.append(current.rstrip())
     for chunk in chunks:
         await message.answer(chunk, parse_mode=None)
+
+@router.message(Command("online"))
+async def online_command(message: Message):
+    if not _userbot_manager:
+        await message.answer("UserBot manager is unavailable.", parse_mode=None)
+        return
+
+    parts = (message.text or "").strip().split(maxsplit=1)
+    action = parts[1].strip().lower() if len(parts) > 1 else ""
+    if action == "status":
+        status = _userbot_manager.online_status()
+        last = status["last_success"]
+        last_text = last.strftime("%Y-%m-%d %H:%M:%S UTC") if last else "never"
+        await message.answer(
+            f"Online keeper: {'ON' if status['enabled'] else 'OFF'}\n"
+            f"Last successful ping: {last_text}\n"
+            f"Failures in the last hour: {status['failures_last_hour']}",
+            parse_mode=None,
+        )
+        return
+
+    if action not in {"on", "off"}:
+        await message.answer("Usage: /online on | /online off | /online status", parse_mode=None)
+        return
+
+    result = await _userbot_manager.set_online(action == "on")
+    if action == "on":
+        await message.answer(
+            f"Online keeper enabled for {result['connected_accounts']} connected account(s).",
+            parse_mode=None,
+        )
+    else:
+        await message.answer(
+            f"Online keeper disabled; offline status sent to {result['offline_sent']} account(s).",
+            parse_mode=None,
+        )
+
