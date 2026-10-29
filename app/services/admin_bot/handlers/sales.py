@@ -7,8 +7,43 @@ from app.models.customer import Customer
 from sqlalchemy import select, func, and_, desc
 from app.services.admin_bot.keyboards import back_kb, sales_kb
 from datetime import datetime, timezone, timedelta
+from app.core.config import settings
 
 router = Router()
+
+
+@router.message(Command("confirm_paid"))
+async def cmd_confirm_paid(message: Message):
+    admin = message.from_user
+    if not admin or admin.id not in set(settings.admin_ids):
+        return
+    parts = (message.text or "").strip().split()
+    if len(parts) != 2:
+        await message.answer("Usage: /confirm_paid <order_id>", parse_mode=None)
+        return
+    order_id = parts[1]
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Customer).where(
+                Customer.metadata_["order_flow"]["order_id"].as_string() == order_id
+            ).with_for_update()
+        )
+        customer = result.scalar_one_or_none()
+        if customer is None:
+            await message.answer("Order not found.", parse_mode=None)
+            return
+        metadata = dict(customer.metadata_ or {})
+        state = dict(metadata.get("order_flow") or {})
+        state["payment_status"] = "confirmed"
+        state["payment_confirmed_at"] = datetime.now(timezone.utc).isoformat()
+        state["payment_confirmed_by"] = int(admin.id)
+        metadata["order_flow"] = state
+        customer.metadata_ = metadata
+        await session.commit()
+    await message.answer(
+        "Payment confirmed for " + order_id + ". Delivery remains limited to the recorded buyer and a server-side payload.",
+        parse_mode=None,
+    )
 
 
 @router.message(Command("sales"))

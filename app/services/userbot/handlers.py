@@ -20,6 +20,7 @@ from app.services.sales.lead_manager import get_or_create_lead
 from app.services.sales.direct_questions import (
     get_discount_reply,
     get_direct_sales_reply,
+    get_free_server_reply,
     has_customer_context_hint,
 )
 from app.services.sales.payment import (
@@ -53,6 +54,29 @@ from app.services.userbot.reply_timing import (
 from app.services.monitoring.metrics_collector import increment_daily_stat
 from app.cache.redis_client import cache_get, cache_set
 from app.services.userbot.challenge_dm_guard import should_silence_challenge_dm
+from app.services.userbot.outbound_guard import (
+    SAFE_FALLBACK,
+    claim_ai_reply_slot,
+    filter_ai_outbound,
+    is_free_server_request,
+    is_prompt_injection,
+    is_support_request,
+    notify_admins_once,
+    outbound_reason,
+    record_suspicious_attempt,
+    sanitize_history,
+    sanitize_model_context,
+    send_customer_message,
+    support_handoff,
+    guard_enabled,
+)
+from app.services.sales.delivery import (
+    HANDOFF as DELIVERY_HANDOFF,
+    PAYMENT_NOT_CONFIRMED_EN,
+    PAYMENT_NOT_CONFIRMED_FA,
+    deliver_paid_order,
+    is_delivery_request,
+)
 from app.cache.keys import CacheKeys
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -64,6 +88,28 @@ import uuid
 import random
 
 logger = get_logger(__name__)
+
+
+async def _send_customer_text(event, user_id: int, text: str, *, ai_generated: bool = False, order_id: str | None = None, **kwargs):
+    await send_customer_message(
+        event.reply,
+        user_id,
+        text,
+        ai_generated=ai_generated,
+        order_id=order_id,
+        **kwargs,
+    )
+
+
+async def _send_fixed_reply(session, conv_id, event, user_id: int, text: str, deadline: float, order_id: str | None = None):
+    await save_message(session, conv_id, None, "outbound", text, ai_generated=False)
+    await session.commit()
+    try:
+        await wait_for_reply_deadline(deadline)
+        await _send_customer_text(event, user_id, text, order_id=order_id, parse_mode=None)
+        await increment_daily_stat("messages_sent")
+    except Exception as error:
+        logger.error("send_fixed_reply_failed", user_id=user_id, error=type(error).__name__)
 
 # Telegram can deliver a fast follow-up while the previous message is still
 # waiting for the model. Serializing one customer's messages prevents stale
@@ -353,6 +399,54 @@ async def _handle_private_message(
         await save_message(session, conv.id, event.message.id, "inbound", inbound_content)
         await session.flush()
         order_state = get_order_state(customer)
+        order_id = order_state.get("order_id")
+        receipt_event = is_payment_receipt_message(text, has_media=has_media, stage=order_state.get("stage"))
+        forwarded = bool(getattr(event.message, "fwd_from", None))
+
+        # Forwarded text, prompt injection, and encoded payloads are untrusted.
+        if forwarded or (is_prompt_injection(text) and not receipt_event):
+            await record_suspicious_attempt(user_id, text, "forwarded_or_prompt_injection", order_id)
+            await _send_fixed_reply(session, conv.id, event, user_id, SAFE_FALLBACK, reply_deadline, order_id)
+            return
+        if receipt_event and is_prompt_injection(text):
+            await record_suspicious_attempt(user_id, text, "untrusted_receipt_caption", order_id)
+
+        # Free/trial/test/giveaway/discounted server requests use fixed copy; they
+        # never reach the model or cause provisioning.
+        if not receipt_event and is_free_server_request(text):
+            free_reply = get_free_server_reply(text, language) or support_handoff(language)
+            await _send_fixed_reply(session, conv.id, event, user_id, free_reply, reply_deadline, order_id)
+            return
+
+        # Delivery requests can only reach the separate paid-order module.
+        if not receipt_event and is_delivery_request(text):
+            if not order_id:
+                payment_reply = PAYMENT_NOT_CONFIRMED_FA if language == "fa" else PAYMENT_NOT_CONFIRMED_EN
+                await _send_fixed_reply(session, conv.id, event, user_id, payment_reply, reply_deadline, order_id)
+                return
+            delivery_result = await deliver_paid_order(str(order_id), user_id, event.reply, language)
+            if delivery_result == "delivered":
+                await session.commit()
+                return
+            await _send_fixed_reply(session, conv.id, event, user_id, delivery_result, reply_deadline, order_id)
+            return
+
+        if not receipt_event and is_support_request(text):
+            await notify_admins_once(user_id, text, "support_handoff", order_id)
+            await _send_fixed_reply(session, conv.id, event, user_id, support_handoff(language), reply_deadline, order_id)
+            return
+
+        if not receipt_event and outbound_reason(text):
+            await record_suspicious_attempt(user_id, text, "sensitive_or_secret_input", order_id)
+            await _send_fixed_reply(session, conv.id, event, user_id, SAFE_FALLBACK, reply_deadline, order_id)
+            return
+
+        # Screenshots are never OCR'd or passed to the model. Payment receipts
+        # are handled by the existing human-verification path below.
+        if has_media and not receipt_event:
+            await notify_admins_once(user_id, text or "[image/media attachment]", "untrusted_media_handoff", order_id)
+            await _send_fixed_reply(session, conv.id, event, user_id, support_handoff(language), reply_deadline, order_id)
+            return
 
         # ── Greeting fast-path ─────────────────────────────────────────────
         # Pure greeting (single word/phrase): skip AI to save tokens and reply
@@ -366,7 +460,7 @@ async def _handle_private_message(
                     await session.commit()
                     try:
                         await wait_for_reply_deadline(reply_deadline)
-                        await event.reply(greeting_reply, parse_mode="md")
+                        await _send_customer_text(event, user_id, greeting_reply, parse_mode="md")
                         await increment_daily_stat("messages_sent")
                         logger.info("greeting_fast_reply", user_id=user_id, language=language)
                     except Exception as e:
@@ -414,7 +508,7 @@ async def _handle_private_message(
             )
             try:
                 await wait_for_reply_deadline(reply_deadline)
-                await event.reply(receipt_reply, parse_mode="md")
+                await _send_customer_text(event, user_id, receipt_reply, order_id=order_id, parse_mode="md")
                 await increment_daily_stat("messages_sent")
                 logger.info(
                     "payment_receipt_received",
@@ -426,7 +520,7 @@ async def _handle_private_message(
                 logger.error("send_receipt_ack_failed", user_id=user_id, error=str(error))
             return
 
-        history = history_before_current
+        history = sanitize_history(history_before_current)
         messages = _build_model_messages(
             history,
             text,
@@ -498,6 +592,16 @@ async def _handle_private_message(
 
         if payment_address_sent and payment_method:
             await schedule_followup(session, customer.id, stage="day_1")
+
+        # Deterministic answers stay available; pause or throttle model calls.
+        if not direct_reply and not await guard_enabled():
+            await notify_admins_once(user_id, text, "guard_paused", order_id)
+            await _send_fixed_reply(session, conv.id, event, user_id, support_handoff(language), reply_deadline, order_id)
+            return
+        if not direct_reply and not await claim_ai_reply_slot(user_id):
+            logger.info("customer_ai_cooldown", user_id=user_id)
+            await session.commit()
+            return
 
         # Deterministic answers should not wait for a second AI request. The
         # classifier still runs for normal messages, but a slow provider cannot
@@ -580,7 +684,7 @@ async def _handle_private_message(
         if classification.get("competitor_mentioned"):
             await upsert_memory(session, customer.id, "competitor", classification["competitor_mentioned"], confidence=1.0)
 
-        context_prompt = await build_context_prompt(session, customer, conv.id)
+        context_prompt = sanitize_model_context(await build_context_prompt(session, customer, conv.id))
         known_facts = await get_customer_memory(session, customer.id)
         discovery_completed = any(
             known_facts.get(key, {}).get("value")
@@ -621,6 +725,7 @@ async def _handle_private_message(
         typing_delay = 0 if direct_reply else random.uniform(*delay_range)
 
         tokens = 0
+        reply_is_ai = False
         try:
             async with event.client.action(event.chat_id, "typing"):
                 await asyncio.sleep(typing_delay)
@@ -632,6 +737,7 @@ async def _handle_private_message(
                         generate_reply(messages, full_system),
                         timeout=settings.AI_RESPONSE_TIMEOUT_SECONDS,
                     )
+                    reply_is_ai = True
 
                 reply = _remove_repeated_greeting(reply, is_first_reply)
                 if not direct_reply and _has_repeated_content(reply, previous_replies):
@@ -657,6 +763,7 @@ async def _handle_private_message(
                             timeout=settings.AI_RESPONSE_TIMEOUT_SECONDS,
                         )
                         reply = _remove_repeated_greeting(fresh_reply, is_first_reply)
+                        reply_is_ai = True
                         tokens += fresh_tokens
                     except Exception as retry_err:
                         # Keep the first usable answer if the quality retry
@@ -669,6 +776,7 @@ async def _handle_private_message(
         except Exception as ai_err:
             logger.error("ai_failed_using_fallback", user_id=user_id, error=str(ai_err))
             reply = _fallback_reply(language, user_id, text)
+            reply_is_ai = False
 
         if not payment_reply or payment_addendum:
             if not validate_reply(reply, language, payment_allowed=False):
@@ -679,13 +787,17 @@ async def _handle_private_message(
                     payment_allowed=False,
                 )
                 reply = _fallback_reply(language, user_id, text)
+                reply_is_ai = False
+
+        if reply_is_ai:
+            reply = await filter_ai_outbound(user_id, reply, order_id)
 
         if payment_addendum:
             reply = f"{reply.rstrip()}\n\n{payment_addendum}"
 
         await save_message(
             session, conv.id, None, "outbound", reply,
-            ai_generated=tokens > 0, tokens=tokens,
+            ai_generated=reply_is_ai, tokens=tokens,
         )
 
         msg_count_key = f"conv_msg_count:{conv.id}"
@@ -708,14 +820,14 @@ async def _handle_private_message(
             separator = f"\n\n{payment_addendum}"
             customer_reply = reply[:-len(separator)].rstrip() if reply.endswith(separator) else reply
             if customer_reply:
-                await event.reply(customer_reply, parse_mode="md")
+                await _send_customer_text(event, user_id, customer_reply, ai_generated=reply_is_ai, order_id=order_id, parse_mode="md")
             for payment_part in split_payment_message(payment_addendum):
-                await event.reply(payment_part, parse_mode="html")
+                await _send_customer_text(event, user_id, payment_part, order_id=order_id, parse_mode="html")
         elif payment_reply and reply == payment_reply:
             for payment_part in split_payment_message(payment_reply):
-                await event.reply(payment_part, parse_mode="html")
+                await _send_customer_text(event, user_id, payment_part, order_id=order_id, parse_mode="html")
         else:
-            await event.reply(reply, parse_mode="md")
+            await _send_customer_text(event, user_id, reply, ai_generated=reply_is_ai, order_id=order_id, parse_mode="md")
         await increment_daily_stat("messages_sent")
         logger.info(
             "reply_sent",
@@ -725,7 +837,7 @@ async def _handle_private_message(
             intent=classification.get("intent"),
         )
     except Exception as e:
-        logger.error("send_reply_failed", user_id=user_id, error=str(e))
+        logger.error("send_reply_failed", user_id=user_id, error=type(e).__name__)
 
 
 async def _extract_and_store_facts(customer_id: uuid.UUID, messages: list[dict]):

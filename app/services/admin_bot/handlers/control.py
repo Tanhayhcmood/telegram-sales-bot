@@ -953,6 +953,49 @@ async def channel_diag(event: Message | CallbackQuery):
         await status_msg.edit_text(text, parse_mode="Markdown", reply_markup=back_kb())
 
 
+@router.message(Command("guard_status"))
+async def cmd_guard_status(message: Message):
+    if not message.from_user or message.from_user.id not in set(settings.admin_ids):
+        return
+    from app.services.userbot.outbound_guard import guard_enabled
+    enabled = await guard_enabled()
+    await message.answer(
+        "Customer AI replies: " + ("on" if enabled else "paused") + ". Mandatory delivery and sensitive-output checks remain enforced.",
+        parse_mode=None,
+    )
+
+
+@router.message(Command("guard_log"))
+async def cmd_guard_log(message: Message):
+    if not message.from_user or message.from_user.id not in set(settings.admin_ids):
+        return
+    from app.services.userbot.outbound_guard import guard_log
+    entries = await guard_log()
+    if not entries:
+        await message.answer("No blocked AI outbound messages recorded.", parse_mode=None)
+        return
+    lines = ["Last blocked AI outbound messages:"]
+    for entry in entries[:20]:
+        lines.append("user=" + str(entry.get("user_id", "?")) + " reason=" + str(entry.get("reason", "?")) + " text=" + str(entry.get("text", "")))
+    await message.answer("\n".join(lines)[:3800], parse_mode=None)
+
+
+@router.message(Command("guard"))
+async def cmd_guard(message: Message):
+    if not message.from_user or message.from_user.id not in set(settings.admin_ids):
+        return
+    from app.services.userbot.outbound_guard import guard_enabled, set_guard_enabled
+    parts = (message.text or "").strip().split()
+    if len(parts) != 2 or parts[1].casefold() not in {"on", "off"}:
+        enabled = await guard_enabled()
+        await message.answer("Usage: /guard on|off\nCurrent: " + ("on" if enabled else "off"), parse_mode=None)
+        return
+    enabled = parts[1].casefold() == "on"
+    await set_guard_enabled(enabled, message.from_user.id)
+    status = "enabled" if enabled else "AI replies paused (hard safety gates remain on)"
+    await message.answer("Customer AI guard " + status + ".", parse_mode=None)
+
+
 def _ai_challenge_skip_enabled(value) -> bool:
     if value is None:
         return settings.AI_SKIP_CHALLENGE_DMS

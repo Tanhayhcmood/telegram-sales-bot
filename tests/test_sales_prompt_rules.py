@@ -29,7 +29,8 @@ class SalesPromptRulesTests(unittest.TestCase):
 
         self.assertIn("Free server offers are announced only in the channel", prompt)
         self.assertIn("never claim or imply that a private server is free", prompt)
-        self.assertIn("show all four plans for this question", prompt)
+        self.assertIn("fixed-style reply", prompt)
+        self.assertNotIn("show all four plans for this question", prompt)
         self.assertIn("ULTRA is quote-only", prompt)
 
     def test_payment_policy_requires_explicit_address_or_checkout_choice(self):

@@ -72,7 +72,7 @@ class OrderFlowTests(unittest.TestCase):
     def test_prompt_requires_professional_checkout_ownership(self):
         prompt = get_system_prompt("fa")
 
-        self.assertIn("CHECKOUT OWNERSHIP — GUIDE THE CUSTOMER ALL THE WAY", prompt)
+        self.assertIn("CHECKOUT BOUNDARY — SALES ONLY", prompt)
         self.assertIn("Never say “paid,” “confirmed,” “completed,” or “activated”", prompt)
 
 
