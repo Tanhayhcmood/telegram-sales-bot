@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     ADMIN_BOT_TOKEN: str = ""
     ADMIN_TELEGRAM_IDS: str = ""
     TELEGRAM_PUBLIC_BOT_TOKEN: str = ""
+    GROWTH_BOT_TOKEN: str = ""
     PUBLIC_BOT_USERNAME: str = ""
 
     # ── Force-subscription gate ─────────────────────────────────────────────

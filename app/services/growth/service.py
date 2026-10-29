@@ -308,181 +308,18 @@ async def _unpin_previous_round(bot, messages: list[dict]) -> None:
 
 
 async def start_growth_round(bot=None, now: datetime | None = None) -> dict:
-    bot = bot or _public_bot()
-    requested_now = now
-    now = now or _now()
-    if not bot:
-        return {"status": "bot_unavailable"}
-
-    async with AsyncSessionLocal() as session:
-        active = await session.scalar(
-            select(GrowthRound).where(GrowthRound.is_active.is_(True)).with_for_update()
-        )
-        if active:
-            if active.status == "draft" and active.started_at < now - timedelta(minutes=20):
-                active.status = "publish_failed"
-                active.is_active = False
-                active.last_error = "stale draft recovered by scheduler"
-                await session.commit()
-            else:
-                return {"status": "active", "round_id": str(active.id)}
-
-        channels = await _target_channels(session)
-        if not channels:
-            return {"status": "no_channels"}
-        previous = await session.scalar(
-            select(GrowthRound).order_by(GrowthRound.started_at.desc()).limit(1)
-        )
-        previous_type = previous.challenge_type if previous else None
-        last_published = await session.scalar(
-            select(GrowthRound)
-            .where(GrowthRound.published_messages != [])
-            .order_by(GrowthRound.started_at.desc())
-            .limit(1)
-        )
-        previous_messages = list(last_published.published_messages or []) if last_published else []
-        history_result = await session.execute(select(GrowthRound.challenge_text))
-        history = [row[0] for row in history_result.all() if row[0]]
-
-    challenge_type = next_challenge_type(previous_type)
-    username = await _submission_bot_username()
-    if not username:
-        return {"status": "admin_bot_unavailable"}
-    try:
-        challenge_text, challenge_hash = await generate_unique_challenge(
-            challenge_type, history, username
-        )
-    except Exception as exc:
-        return {"status": "generation_failed"}
-
-    if requested_now is None:
-        now = _now()
-    ends_at = now + timedelta(hours=ENTRY_HOURS)
-    review_ends_at = now + timedelta(hours=ROUND_HOURS)
-    round_obj = GrowthRound(
-        challenge_type=challenge_type,
-        challenge_text=challenge_text,
-        challenge_hash=challenge_hash,
-        status="draft",
-        is_active=True,
-        channel_ids=channels,
-        published_messages=[],
-        started_at=now,
-        entries_close_at=ends_at,
-        review_ends_at=review_ends_at,
-        next_round_at=review_ends_at,
-        status_updated_at=now,
-    )
-    async with AsyncSessionLocal() as session:
-        active = await session.scalar(
-            select(GrowthRound).where(GrowthRound.is_active.is_(True)).with_for_update()
-        )
-        if active:
-            return {"status": "active", "round_id": str(active.id)}
-        session.add(round_obj)
-        try:
-            await session.commit()
-        except IntegrityError:
-            await session.rollback()
-            logger.warning("growth_round_insert_conflict")
-            return {"status": "active"}
-
-        await _unpin_previous_round(bot, previous_messages)
-
-        async def save_published_message(record: dict) -> None:
-            current = list(round_obj.published_messages or [])
-            current.append(record)
-            round_obj.published_messages = current
-            round_obj.status = "open"
-            round_obj.status_updated_at = _now()
-            await session.commit()
-
-        published, results = await publish_round_to_channels(
-            bot,
-            channels,
-            round_obj,
-            entries_count=0,
-            bot_username=username,
-            on_published=save_published_message,
-        )
-        failures = [row for row in results if row["status"] != "published"]
-        if published:
-            round_obj.status = "open"
-            round_obj.last_error = (
-                "; ".join(f"{row['chat_id']}: {row['error']}" for row in failures)[:1000]
-                if failures else None
-            )
-            round_obj.status_updated_at = _now()
-            await session.commit()
-        else:
-            round_obj.status = "publish_failed"
-            round_obj.is_active = False
-            round_obj.last_error = "No configured channel accepted the post."
-            round_obj.next_round_at = now + timedelta(hours=ROUND_HOURS)
-            await session.commit()
-
-    logger.info(
-        "growth_round_published",
-        round_id=str(round_obj.id),
-        challenge_type=challenge_type,
-        published=len(published),
-        total=len(channels),
-    )
-    return {
-        "status": "open" if published else "publish_failed",
-        "round_id": str(round_obj.id),
-        "challenge_type": challenge_type,
-        "published": len(published),
-        "total": len(channels),
-    }
+    from app.services.growth.publishing import start_growth_round as publish_growth_round
+    return await publish_growth_round(bot=bot, now=now)
 
 
 async def _edit_round_posts(round_obj: GrowthRound, entries_count: int, bot, now: datetime) -> None:
-    if not bot:
-        return
-    text = html.escape(
-        render_round_post(round_obj, entries_count, now, await _submission_bot_username()),
-        quote=False,
-    )
-    for post in round_obj.published_messages or []:
-        try:
-            await bot.edit_message_text(
-                chat_id=post["chat_id"],
-                message_id=int(post["message_id"]),
-                text=text,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-        except Exception as exc:
-            logger.warning(
-                "growth_status_edit_failed",
-                chat_id=str(post.get("chat_id")),
-                message_id=post.get("message_id"),
-                error=str(exc)[:200],
-            )
+    from app.services.growth.publishing import refresh_growth_post
+    await refresh_growth_post(str(round_obj.id))
 
 
 async def refresh_growth_post(round_id: str | uuid.UUID | None = None) -> None:
-    bot = _public_bot()
-    if not bot:
-        return
-    now = _now()
-    async with AsyncSessionLocal() as session:
-        query = select(GrowthRound).where(GrowthRound.is_active.is_(True))
-        if round_id:
-            query = query.where(GrowthRound.id == uuid.UUID(str(round_id)))
-        round_obj = await session.scalar(query.order_by(GrowthRound.started_at.desc()).limit(1))
-        if not round_obj or round_obj.status not in {"open", "review", "cancelled"}:
-            return
-        count = await session.scalar(
-            select(func.count(GrowthEntry.id)).where(
-                GrowthEntry.round_id == round_obj.id,
-                GrowthEntry.status.in_(("pending", "approved")),
-            )
-        )
-        await _edit_round_posts(round_obj, int(count or 0), bot, now)
-        round_obj.status_updated_at = now
-        await session.commit()
+    from app.services.growth.publishing import refresh_growth_post as refresh
+    await refresh(str(round_id) if round_id else None)
 
 
 async def submit_growth_proof(
@@ -846,160 +683,13 @@ async def _announce_round(round_obj: GrowthRound, public_bot) -> bool:
 
 
 async def finalize_growth_round(round_id: str | uuid.UUID, now: datetime | None = None) -> dict:
-    now = now or _now()
-    round_uuid = uuid.UUID(str(round_id))
-    new_winner_ids: list[uuid.UUID] = []
-    async with AsyncSessionLocal() as session:
-        round_obj = await session.scalar(
-            select(GrowthRound).where(GrowthRound.id == round_uuid).with_for_update()
-        )
-        if not round_obj or round_obj.status not in {"review", "finalizing"}:
-            return {"status": "not_due"}
-        if round_obj.status == "review" and now < round_obj.review_ends_at:
-            return {"status": "not_due"}
-        round_obj.status = "finalizing"
-        if round_obj.final_outcome is None:
-            approved_count = int(
-                await session.scalar(
-                    select(func.count(GrowthEntry.id)).where(
-                        GrowthEntry.round_id == round_obj.id,
-                        GrowthEntry.status == "approved",
-                    )
-                )
-                or 0
-            )
-            approved_users = (
-                await session.execute(
-                    select(GrowthEntry.telegram_user_id, GrowthEntry.username)
-                    .where(
-                        GrowthEntry.round_id == round_obj.id,
-                        GrowthEntry.status == "approved",
-                    )
-                    .order_by(GrowthEntry.created_at)
-                )
-            ).all()
-            recent_wins = (
-                await session.execute(
-                    select(GrowthWinner.telegram_user_id).where(
-                        GrowthWinner.selected_at > now - WIN_COOLDOWN
-                    )
-                )
-            ).scalars().all()
-            blocked_users = {int(user_id) for user_id in recent_wins}
-            eligible = [
-                (int(user_id), username)
-                for user_id, username in approved_users
-                if int(user_id) not in blocked_users
-            ]
-            if approved_count == 0:
-                round_obj.final_outcome = "no_winner"
-                round_obj.last_error = "no_approved_entries"
-            elif eligible:
-                user_id, username = random.SystemRandom().choice(eligible)
-                winner = GrowthWinner(
-                    round_id=round_obj.id,
-                    telegram_user_id=user_id,
-                    username=username,
-                    delivery_status="pending_delivery",
-                    selected_at=now,
-                )
-                session.add(winner)
-                await session.flush()
-                new_winner_ids.append(winner.id)
-                round_obj.final_outcome = "completed"
-            else:
-                round_obj.final_outcome = "no_winner"
-                round_obj.last_error = "no_eligible_users"
-            await session.commit()
-        else:
-            await session.commit()
-        round_copy = round_obj
-
-    public_bot = _public_bot()
-    for winner_id in new_winner_ids:
-        await _notify_selected_winner(winner_id, public_bot)
-    if not round_copy.announcement_sent:
-        announced = await _announce_round(round_copy, public_bot)
-        if not announced:
-            return {"status": "announcement_pending", "round_id": str(round_uuid)}
-        async with AsyncSessionLocal() as session:
-            updated = await session.scalar(
-                select(GrowthRound).where(GrowthRound.id == round_uuid).with_for_update()
-            )
-            if updated:
-                updated.announcement_sent = True
-                await session.commit()
-
-    async with AsyncSessionLocal() as session:
-        completed = await session.scalar(
-            select(GrowthRound).where(GrowthRound.id == round_uuid).with_for_update()
-        )
-        if completed:
-            completed.status = completed.final_outcome or "no_winner"
-            completed.is_active = False
-            completed.status_updated_at = _now()
-            await session.commit()
-    return {"status": round_copy.final_outcome or "no_winner", "round_id": str(round_uuid)}
+    from app.services.growth.publishing import finalize_growth_round as finalize
+    return await finalize(str(round_id), now)
 
 
 async def advance_growth_schedule(now: datetime | None = None) -> dict:
-    now = now or _now()
-    due_round_id: uuid.UUID | None = None
-    status_to_refresh: uuid.UUID | None = None
-    async with AsyncSessionLocal() as session:
-        active = await session.scalar(
-            select(GrowthRound).where(GrowthRound.is_active.is_(True)).with_for_update()
-        )
-        if active:
-            if active.status == "draft" and active.started_at < now - timedelta(minutes=20):
-                active.status = "publish_failed"
-                active.is_active = False
-                active.last_error = "stale draft recovered by scheduler"
-                await session.commit()
-            elif active.status == "open" and now >= active.entries_close_at:
-                active.status = "review"
-                active.status_updated_at = now
-                status_to_refresh = active.id
-                if now >= active.review_ends_at:
-                    due_round_id = active.id
-                await session.commit()
-            elif active.status == "open":
-                if not active.status_updated_at or now - active.status_updated_at >= timedelta(minutes=5):
-                    status_to_refresh = active.id
-                    active.status_updated_at = now
-                    await session.commit()
-            elif active.status == "review" and now >= active.review_ends_at:
-                due_round_id = active.id
-            elif active.status == "review":
-                if not active.status_updated_at or now - active.status_updated_at >= timedelta(minutes=5):
-                    status_to_refresh = active.id
-                    active.status_updated_at = now
-                    await session.commit()
-            elif active.status == "finalizing":
-                due_round_id = active.id
-            else:
-                return {"status": active.status}
-
-    if status_to_refresh:
-        await refresh_growth_post(status_to_refresh)
-    if due_round_id:
-        await finalize_growth_round(due_round_id, now)
-
-    async with AsyncSessionLocal() as session:
-        active = await session.scalar(
-            select(GrowthRound).where(GrowthRound.is_active.is_(True)).limit(1)
-        )
-        latest = await session.scalar(
-            select(GrowthRound).order_by(GrowthRound.started_at.desc()).limit(1)
-        )
-        should_start = not active and (
-            latest is None or latest.next_round_at <= now
-        )
-    if should_start:
-        return await start_growth_round()
-    if active:
-        return {"status": active.status, "round_id": str(active.id)}
-    return {"status": latest.status if latest else "idle"}
+    from app.services.growth.publishing import advance_growth_schedule as advance
+    return await advance(now)
 
 
 async def _log_scheduler_skip_once(result: dict) -> None:
@@ -1027,6 +717,9 @@ async def _log_scheduler_skip_once(result: dict) -> None:
     )
 
 
+async def run_growth_challenge_scheduler() -> None:
+    from app.services.growth.publishing import run_growth_challenge_scheduler as run
+    await run()
 async def run_growth_challenge_scheduler() -> None:
     logger.info(
         "growth_challenge_scheduler_started",
