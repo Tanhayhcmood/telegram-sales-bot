@@ -1,10 +1,15 @@
 from telethon import TelegramClient
+from telethon.errors import AuthKeyDuplicatedError, SessionRevokedError, UnauthorizedError
 from telethon.sessions import StringSession
 from app.core.config import settings
 from app.core.logging import get_logger
 from typing import Optional
 
 logger = get_logger(__name__)
+
+
+class UserBotUnauthorizedError(Exception):
+    """Raised when the saved user session is no longer authorized."""
 
 
 class UserBotClient:
@@ -20,6 +25,7 @@ class UserBotClient:
         self._session_string = session_string  # keep for creating proxy-specific clients
         self._is_connected = False
         self._me = None
+        self._last_connect_error: Optional[str] = None
 
         # Bug 1 fix: session_string is REQUIRED — Render's disk is ephemeral, so file-based
         # sessions are wiped on every deploy/restart. Always load from the DB-stored string.
@@ -41,7 +47,8 @@ class UserBotClient:
             retry_delay=1,
             timeout=60,
             request_retries=1,
-            flood_sleep_threshold=60,     # Bug 3 fix: was 0 → crash on FloodWait; 60 = auto-sleep
+            flood_sleep_threshold=0,      # Surface FloodWaitError so the keeper can add the requested 5s.
+            receive_updates=True,         # Keep the client subscribed to updates.
         )
         if proxy:
             client_kwargs["proxy"] = proxy
@@ -64,17 +71,23 @@ class UserBotClient:
 
     async def connect(self) -> bool:
         try:
-            await self._client.connect()
+            if not self._client.is_connected():
+                await self._client.connect()
             if not await self._client.is_user_authorized():
-                logger.warning("userbot_not_authorized", phone=self.phone)
-                return False
+                self._is_connected = False
+                raise UserBotUnauthorizedError("Telegram session is not authorized")
             me = await self._client.get_me()
             self._me = me
             self._is_connected = True
+            self._last_connect_error = None
             logger.info("userbot_connected", phone=self.phone, name=f"{me.first_name}")
             return True
+        except (AuthKeyDuplicatedError, SessionRevokedError, UnauthorizedError, UserBotUnauthorizedError):
+            self._is_connected = False
+            raise
         except Exception as e:
-            logger.error("userbot_connect_failed", phone=self.phone, error=str(e))
+            self._is_connected = False
+            self._last_connect_error = type(e).__name__
             return False
 
     async def disconnect(self) -> None:
