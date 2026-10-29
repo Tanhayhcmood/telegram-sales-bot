@@ -52,6 +52,7 @@ from app.services.userbot.reply_timing import (
 )
 from app.services.monitoring.metrics_collector import increment_daily_stat
 from app.cache.redis_client import cache_get, cache_set
+from app.services.userbot.challenge_dm_guard import should_silence_challenge_dm
 from app.cache.keys import CacheKeys
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -297,6 +298,9 @@ async def _handle_private_message(
     reply_deadline: float,
     has_media: bool = False,
 ):
+    if await should_silence_challenge_dm(event, sender, user_id, text):
+        return
+
     inbound_content = text.strip() or "[media attachment]"
     blocked, reason = await should_block(user_id, inbound_content)
     if blocked:

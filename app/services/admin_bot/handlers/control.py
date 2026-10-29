@@ -2,7 +2,12 @@ from aiogram import Router, F, Bot
 from aiogram.types import BufferedInputFile, Message, CallbackQuery
 from aiogram.filters import Command
 from app.services.admin_bot.keyboards import control_kb, back_kb
-from app.cache.redis_client import cache_set, cache_get, cache_delete
+from app.cache.redis_client import cache_set, cache_get, cache_delete, get_redis
+from app.core.config import settings
+from app.services.userbot.challenge_dm_guard import (
+    AI_CHALLENGE_SKIP_OVERRIDE_KEY,
+    AI_CHALLENGE_SILENCE_KEY_PREFIX,
+)
 from app.core.logging import get_logger
 import asyncio
 import random
@@ -946,3 +951,77 @@ async def channel_diag(event: Message | CallbackQuery):
             f"{problems}"
         )
         await status_msg.edit_text(text, parse_mode="Markdown", reply_markup=back_kb())
+
+
+def _ai_challenge_skip_enabled(value) -> bool:
+    if value is None:
+        return settings.AI_SKIP_CHALLENGE_DMS
+    if isinstance(value, str):
+        return value.strip().casefold() in {"1", "true", "on", "yes"}
+    return bool(value)
+
+
+@router.message(Command("ai_challenge_skip"))
+async def cmd_ai_challenge_skip(message: Message):
+    """Set or show the userbot's challenge-DM suppression switch."""
+    parts = (message.text or "").strip().split()
+    if len(parts) != 2 or parts[1].casefold() not in {"on", "off"}:
+        override = await cache_get(AI_CHALLENGE_SKIP_OVERRIDE_KEY)
+        enabled = _ai_challenge_skip_enabled(override)
+        await message.answer(
+            "Usage: /ai_challenge_skip on|off\n"
+            f"Current: {'on' if enabled else 'off'}",
+            parse_mode=None,
+        )
+        return
+
+    enabled = parts[1].casefold() == "on"
+    redis = await get_redis()
+    await redis.set(AI_CHALLENGE_SKIP_OVERRIDE_KEY, "true" if enabled else "false")
+    await message.answer(
+        f"Challenge-DM AI suppression is now {'on' if enabled else 'off'}.",
+        parse_mode=None,
+    )
+
+
+@router.message(Command("ai_silenced_users"))
+async def cmd_ai_silenced_users(message: Message):
+    """List users whose challenge-DM silence window is still active."""
+    redis = await get_redis()
+    entries = []
+    try:
+        async for raw_key in redis.scan_iter(match=f"{AI_CHALLENGE_SILENCE_KEY_PREFIX}:*"):
+            key = raw_key.decode() if isinstance(raw_key, bytes) else str(raw_key)
+            metadata = await cache_get(key)
+            ttl = await redis.ttl(key)
+            if metadata is None or ttl == -2:
+                continue
+            user_id = metadata.get("user_id") if isinstance(metadata, dict) else key.rsplit(":", 1)[-1]
+            display_name = metadata.get("display_name") if isinstance(metadata, dict) else None
+            username = metadata.get("username") if isinstance(metadata, dict) else None
+            identity = " ".join(part for part in (display_name, f"@{username}" if username else None) if part)
+            remaining = "no expiry" if ttl == -1 else f"{max(1, (ttl + 59) // 60)} min left"
+            entries.append((str(identity or "Unknown user").casefold(), f"{identity or 'Unknown user'} — ID {user_id} — {remaining}"))
+    except Exception as error:
+        logger.error("ai_silenced_users_list_failed", error=str(error)[:160])
+        await message.answer("Could not read the silenced-user list right now.", parse_mode=None)
+        return
+
+    if not entries:
+        await message.answer("No users are currently silenced.", parse_mode=None)
+        return
+
+    entries.sort(key=lambda item: item[0])
+    chunks = []
+    current = f"Currently silenced users ({len(entries)}):\n"
+    for _, line in entries:
+        candidate = f"{current}{line}\n"
+        if len(candidate) > 3500 and current.strip():
+            chunks.append(current.rstrip())
+            current = f"{line}\n"
+        else:
+            current = candidate
+    if current.strip():
+        chunks.append(current.rstrip())
+    for chunk in chunks:
+        await message.answer(chunk, parse_mode=None)

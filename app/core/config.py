@@ -70,6 +70,8 @@ class Settings(BaseSettings):
     # provider is slow. The handler falls back to a useful local reply.
     AI_CLASSIFIER_TIMEOUT_SECONDS: float = 2.5
     AI_RESPONSE_TIMEOUT_SECONDS: float = 14.0
+    # Keep the private-message userbot silent on Growth Challenge conversations.
+    AI_SKIP_CHALLENGE_DMS: bool = True
 
     XAI_API_KEY: str = ""
     XAI_BASE_URL: str = "https://api.x.ai/v1"
