@@ -12,7 +12,7 @@ _FULL_MODE = False
 
 # ─── Attempt all module-level imports ───────────────────────────────────────────
 try:
-    from fastapi import Request
+    from fastapi import Header, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse
     from app.core.config import settings
@@ -210,6 +210,12 @@ async def _background_init() -> None:
         _startup_errors.append(f"public_bot: {e}")
 
     try:
+        from app.services.growth.bot import setup_growth_bot
+        await _timed(setup_growth_bot(), "growth_bot", 30.0)
+    except Exception as e:
+        _startup_errors.append(f"growth_bot: {e}")
+
+    try:
         # The legacy quiz API and manual /challenge command remain available.
         # Growth Challenge is the only automatically scheduled challenge.
         from app.services.growth.service import run_growth_challenge_scheduler
@@ -305,6 +311,11 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     try:
+        from app.services.growth.bot import shutdown_growth_bot
+        await shutdown_growth_bot()
+    except Exception:
+        pass
+    try:
         await close_redis()
     except Exception:
         pass
@@ -364,6 +375,20 @@ if _FULL_MODE:
                 logger.error("public_bot_webhook_processing_error", error=str(e))
             return {"ok": True}
 
+        @app.post("/tg-api/growth-bot/webhook")
+        async def growth_bot_webhook(
+            request: Request,
+            secret_header: str | None = Header(default=None, alias="X-Telegram-Bot-Api-Secret-Token"),
+        ):
+            from app.services.growth.bot import process_update, verify_growth_webhook_secret
+            if not verify_growth_webhook_secret(secret_header):
+                raise HTTPException(status_code=401, detail="Invalid Telegram webhook secret")
+            try:
+                await process_update(await request.json())
+            except Exception as e:
+                logger.error("growth_bot_webhook_processing_error", error=str(e))
+            return {"ok": True}
+
         API_PREFIX = "/api/v1"
         app.include_router(customers.router, prefix=API_PREFIX)
         app.include_router(conversations.router, prefix=API_PREFIX)
@@ -399,6 +424,7 @@ async def startup_status():
             "GROQ_KEY_set": bool(settings.GROQ_API_KEY),
             "ADMIN_TOKEN_set": bool(settings.ADMIN_BOT_TOKEN),
             "PUBLIC_BOT_TOKEN_set": bool(settings.public_bot_token),
+            "GROWTH_BOT_TOKEN_set": bool(settings.GROWTH_BOT_TOKEN),
             "XAI_KEY_set": bool(settings.XAI_API_KEY),
             "REDIS_URL": settings.REDIS_URL,
             "RENDER_EXTERNAL_URL": os.environ.get("RENDER_EXTERNAL_URL", "not set"),
