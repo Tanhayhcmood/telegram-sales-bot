@@ -4,6 +4,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services.growth.publishing import list_growth_channel_statuses
 from app.services.growth.service import (
     cancel_growth_round,
     growth_status,
@@ -43,7 +44,7 @@ async def growth_start_command(message: Message):
     elif result["status"] == "no_channels":
         text = "No active channels or REQUIRED_CHANNELS are configured."
     elif result["status"] == "bot_unavailable":
-        text = "The public challenge bot is not running. Check TELEGRAM_PUBLIC_BOT_TOKEN."
+        text = "The Growth bot is not running. Check GROWTH_BOT_TOKEN."
     elif result["status"] == "admin_bot_unavailable":
         text = "The admin bot is unavailable. Check ADMIN_BOT_TOKEN before starting a round."
     else:
@@ -89,6 +90,22 @@ async def growth_status_command(message: Message):
         f"Next round: {next_at}",
         parse_mode=None,
     )
+
+
+@router.message(Command("growth_channels"))
+async def growth_channels_command(message: Message):
+    rows = await list_growth_channel_statuses()
+    if not rows:
+        await message.answer("No channel publish records are available yet.", parse_mode=None)
+        return
+    lines = ["Growth channel publish status:"]
+    for row in rows[:60]:
+        state = "active" if row["active"] else "disabled"
+        details = f"{row['status'] or 'unknown'} at {row['step'] or '—'}"
+        if row["error"]:
+            details += f" — {row['error'][:140]}"
+        lines.append(f"{row['channel_id']}: {state}; {details}")
+    await message.answer("\n".join(lines), parse_mode=None)
 
 
 @router.message(Command("growth_pending_deliveries"))
