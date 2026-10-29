@@ -31,7 +31,9 @@ class SalesPromptRulesTests(unittest.TestCase):
         self.assertIn("never claim or imply that a private server is free", prompt)
         self.assertIn("fixed-style reply", prompt)
         self.assertNotIn("show all four plans for this question", prompt)
-        self.assertIn("ULTRA is quote-only", prompt)
+        self.assertIn("ULTRA is $38/month", prompt)
+        self.assertIn("$35/month", prompt)
+        self.assertNotIn("ULTRA is quote-only", prompt)
 
     def test_payment_policy_requires_explicit_address_or_checkout_choice(self):
         prompt = get_system_prompt("en")
