@@ -78,9 +78,6 @@ def get_dispatcher() -> Dispatcher:
         _dp.include_router(proxy_handler.router)
         _dp.include_router(challenges.router)
         _dp.include_router(growth.router)
-        from app.services.growth.public_handlers import router as growth_proofs_router
-
-        _dp.include_router(growth_proofs_router)
 
     return _dp
 
