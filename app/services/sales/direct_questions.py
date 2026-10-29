@@ -67,22 +67,9 @@ def _contains_any(text: str, phrases: Iterable[str]) -> bool:
 
 
 def _is_free_server_request(text: str) -> bool:
-    """Catch free-server requests without confusing them with free setup."""
-    normalized = _normalized(text)
-    server_pattern = r"(?:\bvps\b|\bservers?\b|سرور)"
-    free_pattern = r"(?:\bfree(?:\s+of\s+charge)?\b|\bgratis\b|\bno\s+cost\b|\bwithout\s+cost\b|رایگان(?:ه)?|مجانی(?:ه)?)"
-    setup_terms = ("setup", "installation", "deployment", "راه اندازی", "راهاندازی", "نصب")
-
-    patterns = (
-        rf"{server_pattern}.{{0,40}}{free_pattern}",
-        rf"{free_pattern}.{{0,40}}{server_pattern}",
-    )
-    for pattern in patterns:
-        for match in re.finditer(pattern, normalized):
-            nearby_context = normalized[max(0, match.start() - 24):match.end() + 24]
-            if not any(term in nearby_context for term in setup_terms):
-                return True
-    return False
+    """Share the deterministic bilingual free/trial server classifier."""
+    from app.services.userbot.outbound_guard import is_free_server_request
+    return is_free_server_request(text)
 
 
 _FREE_SERVER_BANDWIDTH_FA = {

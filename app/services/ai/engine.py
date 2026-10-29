@@ -183,6 +183,9 @@ async def generate_reply(
     max_tokens: int = None,
     tools: List[dict] = None,
 ) -> tuple[str, int]:
+    # This sales-only layer is deliberately incapable of invoking tools.
+    if tools is not None:
+        raise ValueError("AI tools are disabled for customer conversations")
     # Check quota cooldown FIRST — bail immediately, no retries
     if _is_quota_exhausted():
         raise RuntimeError("AI quota cooldown active — skipping")
@@ -199,9 +202,6 @@ async def generate_reply(
         temperature=temperature,
         max_tokens=max_tokens,
     )
-    if tools:
-        kwargs["tools"] = tools
-        kwargs["tool_choice"] = "auto"
 
     try:
         async with _request_gate:
