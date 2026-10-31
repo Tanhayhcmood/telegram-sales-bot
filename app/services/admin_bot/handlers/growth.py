@@ -96,15 +96,22 @@ async def growth_status_command(message: Message):
 async def growth_channels_command(message: Message):
     rows = await list_growth_channel_statuses()
     if not rows:
-        await message.answer("No channel publish records are available yet.", parse_mode=None)
+        await message.answer(
+            "No active Telegram channels or REQUIRED_CHANNELS targets are configured.",
+            parse_mode=None,
+        )
         return
     lines = ["Growth channel publish status:"]
     for row in rows[:60]:
         state = "active" if row["active"] else "disabled"
-        details = f"{row['status'] or 'unknown'} at {row['step'] or '—'}"
+        configured = "configured" if row["configured"] else "not in current target list"
+        status = row["status"] or "not attempted"
+        details = f"{state}; {configured}; {status}"
+        if row["step"]:
+            details += f" at {row['step']}"
         if row["error"]:
             details += f" — {row['error'][:140]}"
-        lines.append(f"{row['channel_id']}: {state}; {details}")
+        lines.append(f"{row['channel_id']}: {details}")
     await message.answer("\n".join(lines), parse_mode=None)
 
 

@@ -43,24 +43,29 @@ def _next_type(previous: str | None) -> str:
     return CHALLENGE_TYPES[(CHALLENGE_TYPES.index(previous) + 1) % len(CHALLENGE_TYPES)]
 
 
+def _merge_target_channels(database_channels: list[Any], required_channels: str | None) -> list[str]:
+    """Combine registered and environment channels without dropping duplicates."""
+    channels = [
+        str(channel).strip()
+        for channel in database_channels
+        if channel is not None and str(channel).strip()
+    ]
+    channels.extend(
+        channel.strip()
+        for channel in (required_channels or "").split(",")
+        if channel.strip()
+    )
+    return list(dict.fromkeys(channels))
+
+
 async def _target_channels(session) -> list[str]:
     result = await session.execute(
         select(TelegramChannel.telegram_channel_id).where(TelegramChannel.is_active.is_(True))
     )
-    channels = [str(x) for x in result.scalars().all()]
-    channels += [x.strip() for x in (settings.REQUIRED_CHANNELS or "").split(",") if x.strip()]
-    unique = list(dict.fromkeys(channels))
-    try:
-        from app.models.growth import GrowthChannelStatus
-        async with AsyncSessionLocal() as status_session:
-            rows = await status_session.execute(
-                select(GrowthChannelStatus.channel_id).where(GrowthChannelStatus.is_active.is_(False))
-            )
-            disabled = {str(x) for x in rows.scalars().all()}
-        unique = [channel for channel in unique if channel not in disabled]
-    except (ImportError, AttributeError):
-        pass
-    return unique
+    # A previous permission failure is a status, not a permanent configuration
+    # decision. Retry every configured target on each round so restored access
+    # can recover without a database edit.
+    return _merge_target_channels(result.scalars().all(), settings.REQUIRED_CHANNELS)
 
 
 def _caption(round_obj: GrowthRound, entries: int, now: datetime, bot_username: str | None,
@@ -170,8 +175,9 @@ async def _record_channel_status(channel_id: str, status: str, step: str | None 
         row.last_step = step
         row.last_error = error[:1000] if error else None
         row.last_publish_at = _now()
-        if deactivate:
-            row.is_active = False
+        # Successful or transient attempts restore the channel; permanent errors
+        # remain visible as disabled, but _target_channels will retry them next round.
+        row.is_active = not deactivate
         await session.commit()
 
 
@@ -617,6 +623,19 @@ async def list_growth_channel_statuses() -> list[dict[str, Any]]:
         return []
     async with AsyncSessionLocal() as session:
         rows = (await session.execute(select(GrowthChannelStatus).order_by(GrowthChannelStatus.channel_id))).scalars().all()
-        return [{"channel_id": row.channel_id, "active": row.is_active, "status": row.last_status,
-                 "step": row.last_step, "error": row.last_error, "published_at": row.last_publish_at}
-                for row in rows]
+        configured = await _target_channels(session)
+        configured_set = set(configured)
+        by_id = {str(row.channel_id): row for row in rows}
+        channel_ids = list(dict.fromkeys(configured + [str(row.channel_id) for row in rows]))
+        return [
+            {
+                "channel_id": channel_id,
+                "active": by_id[channel_id].is_active if channel_id in by_id else True,
+                "configured": channel_id in configured_set,
+                "status": by_id[channel_id].last_status if channel_id in by_id else None,
+                "step": by_id[channel_id].last_step if channel_id in by_id else None,
+                "error": by_id[channel_id].last_error if channel_id in by_id else None,
+                "published_at": by_id[channel_id].last_publish_at if channel_id in by_id else None,
+            }
+            for channel_id in channel_ids
+        ]
