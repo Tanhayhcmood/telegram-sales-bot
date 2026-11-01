@@ -56,6 +56,7 @@ _userbot_task: asyncio.Task | None = None
 _auto_poster_task: asyncio.Task | None = None
 _rdp_pool_task: asyncio.Task | None = None
 _growth_challenge_task: asyncio.Task | None = None
+_shared_bot_mode = False
 _maintenance_task: asyncio.Task | None = None
 _bg_init_task: asyncio.Task | None = None
 _keep_alive_task: asyncio.Task | None = None
@@ -182,7 +183,7 @@ async def _timed(coro, name: str, timeout: float) -> bool:
 
 
 async def _background_init() -> None:
-    global _userbot_task, _auto_poster_task, _growth_challenge_task
+    global _userbot_task, _auto_poster_task, _growth_challenge_task, _shared_bot_mode
 
     await _timed(init_db(), "init_db", 15.0)
 
@@ -205,14 +206,15 @@ async def _background_init() -> None:
 
     public_token = (settings.public_bot_token or "").strip()
     growth_token = os.environ.get("GROWTH_BOT_TOKEN", "").strip()
-    if public_token and growth_token and public_token == growth_token:
-        error = (
-            "TELEGRAM_PUBLIC_BOT_TOKEN and GROWTH_BOT_TOKEN must be distinct; "
-            "one Telegram token cannot own both webhook URLs"
-        )
-        _startup_errors.append(error)
-        logger.error("bot_startup", bot="public_bot", username=None, webhook_url=None, error=error)
-        logger.error("bot_startup", bot="growth_bot", username=None, webhook_url=None, error=error)
+    _shared_bot_mode = bool(public_token or growth_token) and (
+        not public_token or not growth_token or public_token == growth_token
+    )
+    if _shared_bot_mode:
+        try:
+            from app.services.challenges.public_bot import setup_shared_bots
+            await _timed(setup_shared_bots(), "shared_bots", 60.0)
+        except Exception as e:
+            _startup_errors.append(f"shared_bots: {e}")
     else:
         try:
             from app.services.challenges.public_bot import setup_public_bot
@@ -321,11 +323,12 @@ async def lifespan(app: FastAPI):
         await shutdown_public_bot()
     except Exception:
         pass
-    try:
-        from app.services.growth.bot import shutdown_growth_bot
-        await shutdown_growth_bot()
-    except Exception:
-        pass
+    if not _shared_bot_mode:
+        try:
+            from app.services.growth.bot import shutdown_growth_bot
+            await shutdown_growth_bot()
+        except Exception:
+            pass
     try:
         await close_redis()
     except Exception:

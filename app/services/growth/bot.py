@@ -17,11 +17,25 @@ logger = get_logger(__name__)
 _bot: Bot | None = None
 _dispatcher: Dispatcher | None = None
 _username: str | None = None
+_shared_token = False
 _polling_task: asyncio.Task | None = None
 
 
 def get_growth_bot() -> Bot | None:
     return _bot
+
+
+def set_shared_runtime(bot: Bot, dispatcher: Dispatcher, username: str | None) -> None:
+    global _bot, _dispatcher, _username, _polling_task, _shared_token
+    _bot = bot
+    _dispatcher = dispatcher
+    _username = username
+    _polling_task = None
+    _shared_token = True
+
+
+def uses_shared_token() -> bool:
+    return _shared_token
 
 
 def get_growth_bot_username() -> str | None:
@@ -55,7 +69,7 @@ async def setup_growth_bot() -> None:
     growth_token = os.environ.get("GROWTH_BOT_TOKEN", "").strip()
     if not growth_token:
         logger.warning("growth_bot_token_not_set")
-        logger.info("bot_startup", bot="growth_bot", username=None, webhook_url=None)
+        logger.info("bot_startup", bot="growth_bot", username=None, webhook_url=None, shared_token=False)
         return
     _bot = Bot(
         token=growth_token,
@@ -76,7 +90,7 @@ async def setup_growth_bot() -> None:
             drop_pending_updates=False,
             allowed_updates=["message", "chat_member"],
         )
-        logger.info("bot_startup", bot="growth_bot", username=f"@{_username or 'unknown'}", webhook_url=url)
+        logger.info("bot_startup", bot="growth_bot", username=_username, webhook_url=url, shared_token=False)
         return
     await _bot.delete_webhook(drop_pending_updates=False)
     _polling_task = asyncio.create_task(
@@ -84,7 +98,7 @@ async def setup_growth_bot() -> None:
             _bot, allowed_updates=["message", "chat_member"]
         )
     )
-    logger.info("bot_startup", bot="growth_bot", username=f"@{_username or 'unknown'}", webhook_url=None)
+    logger.info("bot_startup", bot="growth_bot", username=_username, webhook_url=None, shared_token=False)
 
 
 async def process_update(update_data: dict) -> None:

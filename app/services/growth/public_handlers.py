@@ -2,6 +2,7 @@ import hashlib
 import json
 
 from aiogram import F, Router
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.filters import Command, CommandStart
 from aiogram.types import ChatMemberUpdated, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
@@ -12,6 +13,7 @@ from app.models.growth import GrowthRound
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.admin_bot.bot import get_bot as get_admin_bot
+from app.services.growth.bot import uses_shared_token
 from app.services.growth.service import (
     record_admin_notification,
     submit_growth_proof,
@@ -159,6 +161,8 @@ async def growth_start(message: Message) -> None:
         return
     parts = (message.text or "").split(maxsplit=1)
     payload = parts[1].strip() if len(parts) > 1 else ""
+    if uses_shared_token() and not payload.startswith("growth_"):
+        raise SkipHandler
     round_id = payload.removeprefix("growth_")
     round_obj = None
     async with AsyncSessionLocal() as session:
