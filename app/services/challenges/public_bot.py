@@ -683,8 +683,8 @@ async def setup_shared_bots() -> None:
     _dispatcher = Dispatcher(storage=MemoryStorage())
     from app.services.growth import bot as growth_bot
     from app.services.growth.public_handlers import router as growth_router
-    # Growth first handles growth_<round> deep links; ordinary /start falls
-    # through to the public challenge router.
+    # Growth links carry a growth_ prefix or round UUID; other /start payloads
+    # fall through to the public challenge router.
     _dispatcher.include_router(growth_router)
     _dispatcher.include_router(router)
 

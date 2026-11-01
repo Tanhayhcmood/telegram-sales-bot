@@ -1,5 +1,6 @@
 import hashlib
 import json
+import uuid
 
 from aiogram import F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
@@ -162,14 +163,16 @@ async def growth_start(message: Message) -> None:
     parts = (message.text or "").split(maxsplit=1)
     payload = parts[1].strip() if len(parts) > 1 else ""
     if uses_shared_token() and not payload.startswith("growth_"):
-        raise SkipHandler
+        try:
+            uuid.UUID(payload)
+        except ValueError:
+            raise SkipHandler
     round_id = payload.removeprefix("growth_")
     round_obj = None
     async with AsyncSessionLocal() as session:
         query = select(GrowthRound).where(GrowthRound.is_active.is_(True))
         if round_id:
             try:
-                import uuid
                 query = query.where(GrowthRound.id == uuid.UUID(round_id))
             except ValueError:
                 await message.answer("That Growth Challenge link is invalid.", parse_mode=None)
