@@ -6,6 +6,7 @@ import os
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramRetryAfter
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Update
 
@@ -27,6 +28,18 @@ def get_growth_bot_username() -> str | None:
     return _username
 
 
+async def _set_webhook_if_needed(bot: Bot, url: str, **kwargs) -> None:
+    if (await bot.get_webhook_info()).url == url:
+        return
+    try:
+        await bot.set_webhook(url=url, **kwargs)
+    except TelegramRetryAfter as exc:
+        await asyncio.sleep(exc.retry_after)
+        if (await bot.get_webhook_info()).url == url:
+            return
+        await bot.set_webhook(url=url, **kwargs)
+
+
 def _webhook_secret() -> str:
     # Telegram only accepts a restricted character set for secret_token. Derive
     # a stable, valid token from the existing application SECRET_KEY.
@@ -39,11 +52,13 @@ def verify_growth_webhook_secret(candidate: str | None) -> bool:
 
 async def setup_growth_bot() -> None:
     global _bot, _dispatcher, _username, _polling_task
-    if not settings.GROWTH_BOT_TOKEN:
+    growth_token = os.environ.get("GROWTH_BOT_TOKEN", "").strip()
+    if not growth_token:
         logger.warning("growth_bot_token_not_set")
+        logger.info("bot_startup", bot="growth_bot", username=None, webhook_url=None)
         return
     _bot = Bot(
-        token=settings.GROWTH_BOT_TOKEN,
+        token=growth_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     _dispatcher = Dispatcher(storage=MemoryStorage())
@@ -51,17 +66,17 @@ async def setup_growth_bot() -> None:
     _dispatcher.include_router(router)
     me = await _bot.get_me()
     _username = me.username
-    logger.info(f"growth bot username=@{_username or 'unknown'}")
     base = os.environ.get("WEBHOOK_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL")
     if base:
         url = base.rstrip("/") + "/tg-api/growth-bot/webhook"
-        await _bot.set_webhook(
-            url=url,
+        await _set_webhook_if_needed(
+            _bot,
+            url,
             secret_token=_webhook_secret(),
             drop_pending_updates=False,
             allowed_updates=["message", "chat_member"],
         )
-        logger.info("growth_bot_webhook_set", url=url)
+        logger.info("bot_startup", bot="growth_bot", username=f"@{_username or 'unknown'}", webhook_url=url)
         return
     await _bot.delete_webhook(drop_pending_updates=False)
     _polling_task = asyncio.create_task(
@@ -69,7 +84,7 @@ async def setup_growth_bot() -> None:
             _bot, allowed_updates=["message", "chat_member"]
         )
     )
-    logger.info("growth_bot_polling_started")
+    logger.info("bot_startup", bot="growth_bot", username=f"@{_username or 'unknown'}", webhook_url=None)
 
 
 async def process_update(update_data: dict) -> None:

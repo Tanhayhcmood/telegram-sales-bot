@@ -5,6 +5,7 @@ import os
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramRetryAfter
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, ChatMemberUpdated, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -46,6 +47,18 @@ def get_public_bot_username() -> str | None:
 
 def get_public_bot() -> Bot | None:
     return _bot
+
+
+async def _set_webhook_if_needed(bot: Bot, url: str, **kwargs) -> None:
+    if (await bot.get_webhook_info()).url == url:
+        return
+    try:
+        await bot.set_webhook(url=url, **kwargs)
+    except TelegramRetryAfter as exc:
+        await asyncio.sleep(exc.retry_after)
+        if (await bot.get_webhook_info()).url == url:
+            return
+        await bot.set_webhook(url=url, **kwargs)
 
 
 # ── keyboard helpers ───────────────────────────────────────────────────────
@@ -653,11 +666,14 @@ async def _run_polling(bot: Bot, dispatcher: Dispatcher) -> None:
 
 async def setup_public_bot() -> None:
     global _bot, _dispatcher, _username, _polling_task
-    if not settings.public_bot_token:
+    # Deliberately use only TELEGRAM_PUBLIC_BOT_TOKEN via settings.public_bot_token.
+    public_token = (settings.public_bot_token or "").strip()
+    if not public_token:
         logger.warning("public_bot_token_not_set")
+        logger.info("bot_startup", bot="public_bot", username=None, webhook_url=None)
         return
     _bot = Bot(
-        token=settings.public_bot_token,
+        token=public_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     _dispatcher = Dispatcher(storage=MemoryStorage())
@@ -667,28 +683,26 @@ async def setup_public_bot() -> None:
         _username = me.username
     except Exception as exc:
         logger.error("public_bot_identity_failed", error=str(exc))
-    webhook_url = (
-        os.environ.get("WEBHOOK_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL")
-    )
-    if webhook_url:
-        url = webhook_url.rstrip("/") + "/tg-api/public-bot/webhook"
+    base = os.environ.get("WEBHOOK_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL")
+    if base:
+        url = base.rstrip("/") + "/tg-api/public-bot/webhook"
         try:
-            await _bot.set_webhook(
-                url=url,
+            await _set_webhook_if_needed(
+                _bot,
+                url,
                 drop_pending_updates=False,
                 allowed_updates=["message", "callback_query", "chat_member"],
             )
-            logger.info("public_bot_webhook_set", url=url)
+            logger.info("bot_startup", bot="public_bot", username=f"@{_username or 'unknown'}", webhook_url=url)
             return
         except Exception as exc:
             logger.error("public_bot_webhook_failed_falling_back_polling", error=str(exc))
     try:
         await _bot.delete_webhook(drop_pending_updates=False)
-        logger.info("public_bot_webhook_cleared_for_polling")
     except Exception as exc:
         logger.warning("public_bot_webhook_clear_failed", error=str(exc))
     _polling_task = asyncio.create_task(_run_polling(_bot, _dispatcher))
-    logger.info("public_bot_polling_started")
+    logger.info("bot_startup", bot="public_bot", username=f"@{_username or 'unknown'}", webhook_url=None)
 
 
 async def process_update(update_data: dict) -> None:
