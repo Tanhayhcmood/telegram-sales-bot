@@ -158,7 +158,10 @@ async def _notify_admins(message: Message, entry: dict) -> None:
 
 @router.message(CommandStart())
 async def growth_start(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    logger.info("handler_matched", name="growth_start", user_id=user_id)
     if not message.from_user or message.from_user.is_bot:
+        logger.info("handler_exit", name="growth_start", user_id=user_id, decision="skipped", reason="bot_sender")
         return
     parts = (message.text or "").split(maxsplit=1)
     payload = parts[1].strip() if len(parts) > 1 else ""
@@ -166,6 +169,7 @@ async def growth_start(message: Message) -> None:
         try:
             uuid.UUID(payload)
         except ValueError:
+            logger.info("handler_exit", name="growth_start", user_id=user_id, decision="skipped", reason="not_growth_payload")
             raise SkipHandler
     round_id = payload.removeprefix("growth_")
     round_obj = None
@@ -176,16 +180,19 @@ async def growth_start(message: Message) -> None:
                 query = query.where(GrowthRound.id == uuid.UUID(round_id))
             except ValueError:
                 await message.answer("That Growth Challenge link is invalid.", parse_mode=None)
+                logger.info("reply_sent", handler="growth_start", user_id=user_id)
                 return
         round_obj = await session.scalar(query.order_by(GrowthRound.started_at.desc()).limit(1))
     if not round_obj:
         await message.answer("There is no active Growth Challenge for this link.", parse_mode=None)
+        logger.info("reply_sent", handler="growth_start", user_id=user_id)
         return
     await message.answer(
         "Welcome to the Growth Challenge. Send a screenshot or forward your proof here privately. "
         "Each person may submit up to three proofs per round. Use /leaderboard to see the top inviters.",
         parse_mode=None,
     )
+    logger.info("reply_sent", handler="growth_start", user_id=user_id)
 
 
 @router.message(Command("leaderboard"))
@@ -235,11 +242,17 @@ async def growth_chat_member_update(update: ChatMemberUpdated) -> None:
 
 @router.message(F.chat.type == "private")
 async def receive_growth_proof(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    logger.info("handler_matched", name="receive_growth_proof", user_id=user_id)
     if not message.from_user or message.from_user.is_bot:
+        logger.info("handler_exit", name="receive_growth_proof", user_id=user_id, decision="skipped", reason="bot_sender")
         return
     is_forwarded = bool(getattr(message, "forward_origin", None))
     file_id, _, is_image = _message_file(message)
     if not ((file_id and is_image) or is_forwarded):
+        logger.info("handler_exit", name="receive_growth_proof", user_id=user_id, decision="skipped", reason="not_growth_proof")
+        if uses_shared_token():
+            raise SkipHandler
         return
 
     proof_hash, proof_file_id, proof_type = await _proof_hash(message)
@@ -248,6 +261,7 @@ async def receive_growth_proof(message: Message) -> None:
             "I couldn't read that proof. Please send a screenshot or forward the original message again.",
             parse_mode=None,
         )
+        logger.info("reply_sent", handler="receive_growth_proof", user_id=user_id)
         return
 
     result = await submit_growth_proof(
@@ -261,12 +275,15 @@ async def receive_growth_proof(message: Message) -> None:
     )
     if result["status"] == "closed":
         await message.answer("There is no open Growth Challenge round right now.", parse_mode=None)
+        logger.info("reply_sent", handler="receive_growth_proof", user_id=user_id)
         return
     if result["status"] == "duplicate":
         await message.answer("That proof was already submitted. Please send a different proof.", parse_mode=None)
+        logger.info("reply_sent", handler="receive_growth_proof", user_id=user_id)
         return
     if result["status"] == "limit":
         await message.answer("You have already used all three proof submissions for this round.", parse_mode=None)
+        logger.info("reply_sent", handler="receive_growth_proof", user_id=user_id)
         return
 
     await message.answer(
@@ -274,6 +291,7 @@ async def receive_growth_proof(message: Message) -> None:
         f"{'' if result['remaining'] == 1 else 's'} left this round.",
         parse_mode=None,
     )
+    logger.info("reply_sent", handler="receive_growth_proof", user_id=user_id)
     await _notify_admins(message, {**result, "proof_type": proof_type})
     from app.services.growth.publishing import refresh_growth_post
     await refresh_growth_post(result["round_id"])

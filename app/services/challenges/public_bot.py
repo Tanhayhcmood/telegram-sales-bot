@@ -111,15 +111,33 @@ async def _require_membership(message: Message) -> bool:
 
     Always call this as the very FIRST check inside every protected handler.
     """
+    user_id = message.from_user.id if message.from_user else None
+    logger.info("middleware_enter", middleware="force_subscription", user_id=user_id)
     if _bot is None:
         await message.answer(
             "⚠️ The bot is starting up. Please wait a few seconds.",
             parse_mode=ParseMode.HTML,
         )
+        logger.info("reply_sent", handler="force_subscription", user_id=user_id)
+        logger.info(
+            "middleware_exit", middleware="force_subscription", user_id=user_id,
+            decision="blocked", reason="bot_unavailable",
+        )
         return False
     allowed, statuses = await check_membership(_bot, message.from_user.id)
     if not allowed:
         await send_gate(message, statuses)
+        logger.info("reply_sent", handler="force_subscription", user_id=user_id)
+    if allowed:
+        reason = "membership_passed" if statuses else "no_membership_checks"
+    elif any(status["status"] == "unverified" for status in statuses):
+        reason = "membership_unverified"
+    else:
+        reason = "not_joined"
+    logger.info(
+        "middleware_exit", middleware="force_subscription", user_id=user_id,
+        decision="allowed" if allowed else "blocked", reason=reason,
+    )
     return allowed
 
 
@@ -159,13 +177,25 @@ def _challenge_text(challenge: Challenge) -> str:
 
 async def _load_user(message: Message, referral_code: str | None = None):
     user = message.from_user
-    async with AsyncSessionLocal() as session:
-        public_user, _ = await get_or_create_public_user(
-            session, user.id, user.username, user.full_name, referral_code=referral_code
+    logger.info("user_db_step_enter", step="load_or_create_user", user_id=user.id)
+    try:
+        async with AsyncSessionLocal() as session:
+            public_user, _ = await get_or_create_public_user(
+                session, user.id, user.username, user.full_name, referral_code=referral_code
+            )
+            await session.commit()
+            await session.refresh(public_user)
+    except Exception:
+        logger.info(
+            "user_db_step_exit", step="load_or_create_user", user_id=user.id,
+            decision="blocked", reason="database_error",
         )
-        await session.commit()
-        await session.refresh(public_user)
-        return public_user
+        raise
+    logger.info(
+        "user_db_step_exit", step="load_or_create_user", user_id=user.id,
+        decision="allowed", reason="user_loaded",
+    )
+    return public_user
 
 
 async def _send_registration(message: Message, challenge: Challenge | None, user) -> None:
@@ -184,15 +214,30 @@ async def _send_registration(message: Message, challenge: Challenge | None, user
         parse_mode=ParseMode.HTML,
         reply_markup=_registration_keyboard(challenge.slug if challenge else ""),
     )
+    logger.info("reply_sent", handler="registration", user_id=message.from_user.id if message.from_user else None)
 
 
 async def _send_challenge(message: Message, challenge: Challenge, public_user) -> bool:
     """Send the challenge question. Re-checks membership as final guard."""
+    user_id = message.from_user.id if message.from_user else None
     if _bot is not None:
+        logger.info("middleware_enter", middleware="force_subscription_final_check", user_id=user_id)
         allowed, statuses = await check_membership(_bot, message.from_user.id)
         if not allowed:
             await send_gate(message, statuses)
+            logger.info("reply_sent", handler="force_subscription_final_check", user_id=user_id)
+            reason = "membership_unverified" if any(
+                status["status"] == "unverified" for status in statuses
+            ) else "not_joined"
+            logger.info(
+                "middleware_exit", middleware="force_subscription_final_check", user_id=user_id,
+                decision="blocked", reason=reason,
+            )
             return False
+        logger.info(
+            "middleware_exit", middleware="force_subscription_final_check", user_id=user_id,
+            decision="allowed", reason="membership_passed" if statuses else "no_membership_checks",
+        )
     async with AsyncSessionLocal() as session:
         current_user = await session.scalar(
             select(PublicUser).where(PublicUser.telegram_id == message.from_user.id)
@@ -215,6 +260,7 @@ async def _send_challenge(message: Message, challenge: Challenge, public_user) -
         if not participant.answer_submitted
         else None,
     )
+    logger.info("reply_sent", handler="public_challenge", user_id=user_id)
     return True
 
 
@@ -222,6 +268,8 @@ async def _send_challenge(message: Message, challenge: Challenge, public_user) -
 
 @router.message(CommandStart())
 async def start(message: Message):
+    user_id = message.from_user.id if message.from_user else None
+    logger.info("handler_matched", name="public_start", user_id=user_id)
     # STEP 1: membership gate — always the very first action
     if not await _require_membership(message):
         return
@@ -236,24 +284,36 @@ async def start(message: Message):
     user = await _load_user(message, referral_code=referral_code)
 
     # STEP 4: determine what to show
-    async with AsyncSessionLocal() as session:
-        challenge = (
-            await session.scalar(
-                select(Challenge).where(Challenge.slug == slug, Challenge.language == "en")
-            )
-            if slug
-            else await get_active_challenge(session)
-        )
-        already_joined = (
-            await session.scalar(
-                select(ChallengeParticipant.id).where(
-                    ChallengeParticipant.challenge_id == challenge.id,
-                    ChallengeParticipant.telegram_id == message.from_user.id,
+    logger.info("user_db_step_enter", step="active_challenge_lookup", user_id=user_id)
+    try:
+        async with AsyncSessionLocal() as session:
+            challenge = (
+                await session.scalar(
+                    select(Challenge).where(Challenge.slug == slug, Challenge.language == "en")
                 )
+                if slug
+                else await get_active_challenge(session)
             )
-            if challenge and challenge.status == "active"
-            else None
+            already_joined = (
+                await session.scalar(
+                    select(ChallengeParticipant.id).where(
+                        ChallengeParticipant.challenge_id == challenge.id,
+                        ChallengeParticipant.telegram_id == message.from_user.id,
+                    )
+                )
+                if challenge and challenge.status == "active"
+                else None
+            )
+    except Exception:
+        logger.info(
+            "user_db_step_exit", step="active_challenge_lookup", user_id=user_id,
+            decision="blocked", reason="database_error",
         )
+        raise
+    logger.info(
+        "user_db_step_exit", step="active_challenge_lookup", user_id=user_id,
+        decision="allowed", reason="lookup_complete",
+    )
 
     if user.terms_accepted_at is None:
         await _send_registration(
@@ -269,6 +329,7 @@ async def start(message: Message):
             parse_mode=ParseMode.HTML,
             reply_markup=_profile_keyboard(),
         )
+        logger.info("reply_sent", handler="public_start", user_id=user_id)
         return
 
     if already_joined:
@@ -278,6 +339,7 @@ async def start(message: Message):
             parse_mode=ParseMode.HTML,
             reply_markup=_profile_keyboard(),
         )
+        logger.info("reply_sent", handler="public_start", user_id=user_id)
         return
 
     await _send_challenge(message, challenge, user)
