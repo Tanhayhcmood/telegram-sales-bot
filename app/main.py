@@ -203,17 +203,28 @@ async def _background_init() -> None:
     except Exception as e:
         _startup_errors.append(f"desktop_image_assets: {e}")
 
-    try:
-        from app.services.challenges.public_bot import setup_public_bot
-        await _timed(setup_public_bot(), "public_bot", 30.0)
-    except Exception as e:
-        _startup_errors.append(f"public_bot: {e}")
+    public_token = (settings.public_bot_token or "").strip()
+    growth_token = os.environ.get("GROWTH_BOT_TOKEN", "").strip()
+    if public_token and growth_token and public_token == growth_token:
+        error = (
+            "TELEGRAM_PUBLIC_BOT_TOKEN and GROWTH_BOT_TOKEN must be distinct; "
+            "one Telegram token cannot own both webhook URLs"
+        )
+        _startup_errors.append(error)
+        logger.error("bot_startup", bot="public_bot", username=None, webhook_url=None, error=error)
+        logger.error("bot_startup", bot="growth_bot", username=None, webhook_url=None, error=error)
+    else:
+        try:
+            from app.services.challenges.public_bot import setup_public_bot
+            await _timed(setup_public_bot(), "public_bot", 30.0)
+        except Exception as e:
+            _startup_errors.append(f"public_bot: {e}")
 
-    try:
-        from app.services.growth.bot import setup_growth_bot
-        await _timed(setup_growth_bot(), "growth_bot", 30.0)
-    except Exception as e:
-        _startup_errors.append(f"growth_bot: {e}")
+        try:
+            from app.services.growth.bot import setup_growth_bot
+            await _timed(setup_growth_bot(), "growth_bot", 30.0)
+        except Exception as e:
+            _startup_errors.append(f"growth_bot: {e}")
 
     try:
         # The legacy quiz API and manual /challenge command remain available.
