@@ -664,13 +664,71 @@ async def _run_polling(bot: Bot, dispatcher: Dispatcher) -> None:
             await asyncio.sleep(5)
 
 
+async def setup_shared_bots() -> None:
+    """Start public and growth flows on one bot when they share a token."""
+    global _bot, _dispatcher, _username, _polling_task
+    public_token = (settings.public_bot_token or "").strip()
+    growth_token = os.environ.get("GROWTH_BOT_TOKEN", "").strip()
+    token = public_token or growth_token
+    if not token:
+        for bot_name in ("public_bot", "growth_bot"):
+            logger.info("bot_startup", bot=bot_name, username=None,
+                        webhook_url=None, shared_token=False)
+        return
+
+    _bot = Bot(
+        token=token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    _dispatcher = Dispatcher(storage=MemoryStorage())
+    from app.services.growth import bot as growth_bot
+    from app.services.growth.public_handlers import router as growth_router
+    # Growth links carry a growth_ prefix or round UUID; other /start payloads
+    # fall through to the public challenge router.
+    _dispatcher.include_router(growth_router)
+    _dispatcher.include_router(router)
+
+    try:
+        me = await _bot.get_me()
+        _username = me.username
+    except Exception as exc:
+        logger.error("public_bot_identity_failed", exception_type=type(exc).__name__)
+    growth_bot.set_shared_runtime(_bot, _dispatcher, _username)
+
+    webhook_url = None
+    base = os.environ.get("WEBHOOK_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL")
+    if base:
+        candidate_url = base.rstrip("/") + "/tg-api/public-bot/webhook"
+        try:
+            await _set_webhook_if_needed(
+                _bot,
+                candidate_url,
+                drop_pending_updates=False,
+                allowed_updates=["message", "callback_query", "chat_member"],
+            )
+            webhook_url = candidate_url
+        except Exception as exc:
+            logger.error("shared_bot_webhook_failed_falling_back_polling", exception_type=type(exc).__name__)
+
+    if webhook_url is None:
+        try:
+            await _bot.delete_webhook(drop_pending_updates=False)
+        except Exception as exc:
+            logger.warning("shared_bot_webhook_clear_failed", exception_type=type(exc).__name__)
+        _polling_task = asyncio.create_task(_run_polling(_bot, _dispatcher))
+
+    for bot_name in ("public_bot", "growth_bot"):
+        logger.info("bot_startup", bot=bot_name, username=_username,
+                    webhook_url=webhook_url, shared_token=True)
+
+
 async def setup_public_bot() -> None:
     global _bot, _dispatcher, _username, _polling_task
     # Deliberately use only TELEGRAM_PUBLIC_BOT_TOKEN via settings.public_bot_token.
     public_token = (settings.public_bot_token or "").strip()
     if not public_token:
         logger.warning("public_bot_token_not_set")
-        logger.info("bot_startup", bot="public_bot", username=None, webhook_url=None)
+        logger.info("bot_startup", bot="public_bot", username=None, webhook_url=None, shared_token=False)
         return
     _bot = Bot(
         token=public_token,
@@ -693,7 +751,7 @@ async def setup_public_bot() -> None:
                 drop_pending_updates=False,
                 allowed_updates=["message", "callback_query", "chat_member"],
             )
-            logger.info("bot_startup", bot="public_bot", username=f"@{_username or 'unknown'}", webhook_url=url)
+            logger.info("bot_startup", bot="public_bot", username=_username, webhook_url=url, shared_token=False)
             return
         except Exception as exc:
             logger.error("public_bot_webhook_failed_falling_back_polling", error=str(exc))
@@ -702,7 +760,7 @@ async def setup_public_bot() -> None:
     except Exception as exc:
         logger.warning("public_bot_webhook_clear_failed", error=str(exc))
     _polling_task = asyncio.create_task(_run_polling(_bot, _dispatcher))
-    logger.info("bot_startup", bot="public_bot", username=f"@{_username or 'unknown'}", webhook_url=None)
+    logger.info("bot_startup", bot="public_bot", username=_username, webhook_url=None, shared_token=False)
 
 
 async def process_update(update_data: dict) -> None:
