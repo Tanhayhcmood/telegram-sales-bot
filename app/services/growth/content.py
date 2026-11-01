@@ -47,14 +47,19 @@ def _normalized(text: str) -> str:
 
 
 def normalized_text_hash(text: str) -> str:
-    return hashlib.sha256(_normalized(text).encode("utf-8")).hexdigest()
+    return hashlib.sha256(_normalized(text).encode("utf-8")).hexdigest()[:16]
+
+
+def _angle_signature(challenge_type: str, angle: str) -> str:
+    seed = f"{challenge_type}:{_normalized(angle)}"
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
 
 
 def _similar(candidate: str, history: list[str]) -> bool:
     new = _normalized(candidate)
     if not new:
         return True
-    for old_text in history[-60:]:
+    for old_text in history[-10:]:
         old = _normalized(old_text)
         if not old:
             continue
@@ -80,12 +85,30 @@ def _fallback(challenge_type: str, angle: str, username: str | None, sister: str
     return f"{openers[salt % len(openers)]} {task} Send your proof privately to {destination}. {sister}".strip()
 
 
-async def generate_growth_copy(challenge_type: str, angle: str, history: list[str],
-                               username: str | None, sister: str) -> tuple[str, str]:
+async def generate_growth_copy(
+    challenge_type: str,
+    angle: str,
+    history: list[str],
+    username: str | None,
+    sister: str,
+    history_signatures: list[str] | None = None,
+    recent_angles: list[tuple[str, str]] | None = None,
+) -> tuple[str, str]:
     if challenge_type not in TASKS:
         raise ValueError("Unknown Growth Challenge type")
-    angle = random.choice(ANGLES[challenge_type])
-    recent = "\n".join(f"- {item[:450]}" for item in history[-60:])
+    recent_history = history[-10:]
+    recent = "\n".join(f"- {item[:450]}" for item in recent_history)
+    signatures = {value[:16] for value in (history_signatures or []) if value}
+    signatures.update(normalized_text_hash(item) for item in recent_history if item)
+    recent_angle_signatures = {
+        _angle_signature(kind, previous_angle)
+        for kind, previous_angle in (recent_angles or [])
+        if kind and previous_angle
+    }
+    preferred_angles = ([angle] if angle in ANGLES[challenge_type] else []) + [
+        item for item in ANGLES[challenge_type] if item != angle
+    ]
+    attempted_angles: set[str] = set()
     destination = f"@{username}" if username else "the Growth bot"
     system = (
         "Write natural, concise English for a Telegram channel community. Sound like a person, "
@@ -93,6 +116,14 @@ async def generate_growth_copy(challenge_type: str, angle: str, history: list[st
         "rules, time, or entry count; the publisher adds those."
     )
     for attempt in range(1, 4):
+        candidate_angle = next((item for item in preferred_angles
+                                if _angle_signature(challenge_type, item) not in recent_angle_signatures
+                                and _angle_signature(challenge_type, item) not in attempted_angles), None)
+        if candidate_angle is None:
+            logger.info("growth_content_regenerate", attempt=attempt, reason="no_fresh_angle")
+            break
+        angle = candidate_angle
+        attempted_angles.add(_angle_signature(challenge_type, angle))
         prompt = (
             f"Write one fresh Growth Challenge for the exact task below.\nType: {challenge_type}\n"
             f"Angle: {angle}\nExact participant task: {TASKS[challenge_type]}\n"
@@ -111,16 +142,23 @@ async def generate_growth_copy(challenge_type: str, angle: str, history: list[st
             logger.warning("growth_content_ai_attempt_failed", attempt=attempt,
                            exception_type=type(exc).__name__, message=str(exc)[:160])
             continue
-        if 60 <= len(text) <= 460 and not re.search(r"[\u0600-\u06FF\u0750-\u077F]", text) and not _similar(text, history):
+        if not 60 <= len(text) <= 460:
+            reason = "invalid_length"
+        elif re.search(r"[\u0600-\u06FF\u0750-\u077F]", text):
+            reason = "non_english"
+        elif normalized_text_hash(text) in signatures:
+            reason = "duplicate_signature"
+        elif _similar(text, recent_history):
+            reason = "similar_to_recent_round"
+        else:
             return text, angle
-        logger.info("growth_content_regenerate", attempt=attempt, reason="similar_or_invalid")
+        logger.info("growth_content_regenerate", attempt=attempt, reason=reason)
     for salt in range(8):
         text = _fallback(challenge_type, angle, username, sister, salt)
-        if not _similar(text, history):
+        if normalized_text_hash(text) not in signatures and not _similar(text, recent_history):
             return text, angle
     text = _fallback(challenge_type, angle + "; new variation", username, sister, random.randrange(1000, 100000))
     return text[:460], angle
-
 
 try:
     from app.services.growth import publishing as _publisher

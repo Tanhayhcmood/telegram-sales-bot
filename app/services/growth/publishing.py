@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import html
+import json
 import random
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,6 +36,20 @@ def _now() -> datetime:
 def _hash_text(text: str) -> str:
     normalized = " ".join((text or "").lower().split())
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _message_signature(text: str) -> str:
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _markup_signature(markup: InlineKeyboardMarkup | None) -> str:
+    payload = markup.model_dump(mode="json", exclude_none=True) if markup else None
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return _message_signature(serialized)
+
+
+def _is_message_not_modified(exc: Exception) -> bool:
+    return isinstance(exc, TelegramBadRequest) and "message is not modified" in str(exc).lower()
 
 
 def _next_type(previous: str | None) -> str:
@@ -181,6 +196,26 @@ async def _record_channel_status(channel_id: str, status: str, step: str | None 
         await session.commit()
 
 
+async def _save_post_signatures(round_id: Any, updates: dict[tuple[str, int], dict[str, str]]) -> None:
+    if not updates:
+        return
+    async with AsyncSessionLocal() as session:
+        current = await session.get(GrowthRound, round_id)
+        if current is None:
+            return
+        posts = [dict(post) for post in current.published_messages or []]
+        changed = False
+        for post in posts:
+            key = (str(post.get("chat_id")), int(post.get("message_id") or 0))
+            signatures = updates.get(key)
+            if signatures:
+                post.update(signatures)
+                changed = True
+        if changed:
+            current.published_messages = posts
+            await session.commit()
+
+
 async def _admin_channel_summary(round_id: str, failures: list[dict[str, str]]) -> None:
     if not failures:
         return
@@ -216,7 +251,12 @@ async def _publish_channel(bot, channel_id: str, round_obj: GrowthRound, entries
                                    caption=caption, parse_mode=None, reply_markup=markup),
             channel_id=channel_id, step="send",
         )
-        record = {"chat_id": str(channel_id), "message_id": int(message.message_id)}
+        record = {
+            "chat_id": str(channel_id),
+            "message_id": int(message.message_id),
+            "caption_signature": _message_signature(caption),
+            "markup_signature": _markup_signature(markup),
+        }
         await _record_channel_status(channel_id, "published", "send")
     except Exception as exc:
         permanent = _is_permanent(exc)
@@ -228,24 +268,38 @@ async def _publish_channel(bot, channel_id: str, round_obj: GrowthRound, entries
         return None, {"channel_id": channel_id, "status": "failed"}, reason
 
     record["sister"] = sister
-    try:
-        edited = _caption(round_obj, entries, _now(), username, sister)
-        await _retry_once(
-            lambda: bot.edit_message_caption(chat_id=channel_id, message_id=record["message_id"],
-                                            caption=edited, parse_mode=None, reply_markup=markup),
-            channel_id=channel_id, step="edit",
-        )
-        await _record_channel_status(channel_id, "published", "edit")
-    except Exception as exc:
-        permanent = _is_permanent(exc)
-        logger.error("growth_channel_publish_failed", channel_id=channel_id, step="edit",
-                     exception_type=type(exc).__name__, message=str(exc)[:240])
-        await _record_channel_status(channel_id, "deactivated" if permanent else "partial",
-                                     "edit", str(exc), permanent)
-        if permanent:
-            return record, {"channel_id": channel_id, "status": "partial"}, {
-                "channel_id": channel_id, "reason": f"edit: {type(exc).__name__}: {exc}"
-            }
+    edited = _caption(round_obj, entries, _now(), username, sister)
+    edited_caption_signature = _message_signature(edited)
+    edited_markup_signature = _markup_signature(markup)
+    if edited == caption and edited_markup_signature == record["markup_signature"]:
+        logger.debug("growth_channel_edit_skipped_unchanged", channel_id=channel_id,
+                     message_id=record["message_id"], step="edit")
+    else:
+        try:
+            await _retry_once(
+                lambda: bot.edit_message_caption(chat_id=channel_id, message_id=record["message_id"],
+                                                caption=edited, parse_mode=None, reply_markup=markup),
+                channel_id=channel_id, step="edit",
+            )
+            record["caption_signature"] = edited_caption_signature
+            record["markup_signature"] = edited_markup_signature
+            await _record_channel_status(channel_id, "published", "edit")
+        except Exception as exc:
+            if _is_message_not_modified(exc):
+                logger.debug("growth_channel_edit_skipped_unchanged", channel_id=channel_id,
+                             message_id=record["message_id"], step="edit")
+                record["caption_signature"] = edited_caption_signature
+                record["markup_signature"] = edited_markup_signature
+            else:
+                permanent = _is_permanent(exc)
+                logger.error("growth_channel_publish_failed", channel_id=channel_id, step="edit",
+                             exception_type=type(exc).__name__, message=str(exc)[:240])
+                await _record_channel_status(channel_id, "deactivated" if permanent else "partial",
+                                             "edit", str(exc), permanent)
+                if permanent:
+                    return record, {"channel_id": channel_id, "status": "partial"}, {
+                        "channel_id": channel_id, "reason": f"edit: {type(exc).__name__}: {exc}"
+                    }
     try:
         await _retry_once(
             lambda: bot.pin_chat_message(chat_id=channel_id, message_id=record["message_id"],
@@ -267,11 +321,21 @@ async def _unpin_previous(bot, posts: list[dict]) -> None:
                            exception_type=type(exc).__name__, message=str(exc)[:180], step="pin")
 
 
-async def _challenge_copy(challenge_type: str, angle: str, history: list[str], username: str | None,
-                          sister: str) -> tuple[str, str]:
+async def _challenge_copy(
+    challenge_type: str,
+    angle: str,
+    history: list[str],
+    username: str | None,
+    sister: str,
+    history_signatures: list[str] | None = None,
+    recent_angles: list[tuple[str, str]] | None = None,
+) -> tuple[str, str]:
     try:
         from app.services.growth.content import generate_growth_copy
-        return await generate_growth_copy(challenge_type, angle, history, username, sister)
+        return await generate_growth_copy(
+            challenge_type, angle, history, username, sister,
+            history_signatures=history_signatures, recent_angles=recent_angles,
+        )
     except ImportError:
         from app.services.growth.service import generate_unique_challenge
         text, digest = await generate_unique_challenge(challenge_type, history, username)
@@ -299,9 +363,18 @@ async def start_growth_round(bot=None, now: datetime | None = None) -> dict:
             previous = await session.scalar(select(GrowthRound).order_by(GrowthRound.started_at.desc()).limit(1))
             previous_type = previous.challenge_type if previous else None
             previous_posts = list(previous.published_messages or []) if previous else []
-            history_rows = await session.execute(select(GrowthRound.challenge_text)
-                                                 .order_by(GrowthRound.started_at.desc()).limit(60))
-            history = [row[0] for row in history_rows.all() if row[0]]
+            history_rows = await session.execute(
+                select(GrowthRound.challenge_text, GrowthRound.challenge_hash,
+                       GrowthRound.challenge_type, GrowthRound.challenge_angle)
+                .order_by(GrowthRound.started_at.desc()).limit(10)
+            )
+            past_rounds = history_rows.all()
+            history = [row.challenge_text for row in past_rounds if row.challenge_text]
+            history_signatures = [str(row.challenge_hash)[:16] for row in past_rounds if row.challenge_hash]
+            recent_angles = [
+                (row.challenge_type, row.challenge_angle)
+                for row in past_rounds if row.challenge_type and row.challenge_angle
+            ]
         challenge_type = _next_type(previous_type)
         index = CHALLENGE_TYPES.index(challenge_type)
         angles = ("a practical group-sharing moment", "a personal invitation", "a useful status update",
@@ -310,7 +383,10 @@ async def start_growth_round(bot=None, now: datetime | None = None) -> dict:
         sister = await _sister_line(bot, channels, 0)
         username = get_growth_bot_username()
         try:
-            text, angle = await _challenge_copy(challenge_type, angle, history, username, sister)
+            text, angle = await _challenge_copy(
+                challenge_type, angle, history, username, sister,
+                history_signatures=history_signatures, recent_angles=recent_angles,
+            )
         except Exception as exc:
             logger.error("growth_challenge_generation_failed", challenge_type=challenge_type,
                          exception_type=type(exc).__name__, message=str(exc)[:200])
@@ -396,23 +472,46 @@ async def refresh_growth_post(round_id: str | None = None) -> None:
             return
         entries = await session.scalar(select(func.count(GrowthEntry.id)).where(
             GrowthEntry.round_id == round_obj.id, GrowthEntry.status.in_(("pending", "approved"))))
-        posts = list(round_obj.published_messages or [])
+        posts = [dict(post) for post in round_obj.published_messages or []]
         channels = list(round_obj.channel_ids or [])
         round_copy = round_obj
     leaders = await growth_leaderboard(str(round_copy.id))
+    signature_updates: dict[tuple[str, int], dict[str, str]] = {}
     for post in posts:
         channel_id = str(post["chat_id"])
-        sister = post.get("sister") or await _sister_line(bot, channels, channels.index(channel_id) if channel_id in channels else 0)
+        message_id = int(post["message_id"])
+        sister = post.get("sister") or await _sister_line(
+            bot, channels, channels.index(channel_id) if channel_id in channels else 0
+        )
         try:
             markup = _round_keyboard(round_copy, get_growth_bot_username(), await _join_url(bot, channel_id))
             caption = _caption(round_copy, int(entries or 0) + sum(x["entries"] for x in leaders),
                                _now(), get_growth_bot_username(), sister, leaders)
+            caption_signature = _message_signature(caption)
+            markup_signature = _markup_signature(markup)
+            if (post.get("caption_signature") == caption_signature
+                    and post.get("markup_signature") == markup_signature):
+                logger.debug("growth_channel_edit_skipped_unchanged", channel_id=channel_id,
+                             message_id=message_id, step="edit")
+                continue
             await _retry_once(lambda: bot.edit_message_caption(
-                chat_id=channel_id, message_id=int(post["message_id"]), caption=caption,
+                chat_id=channel_id, message_id=message_id, caption=caption,
                 parse_mode=None, reply_markup=markup), channel_id=channel_id, step="edit")
         except Exception as exc:
-            logger.error("growth_channel_publish_failed", channel_id=channel_id, step="edit",
-                         exception_type=type(exc).__name__, message=str(exc)[:200])
+            if _is_message_not_modified(exc):
+                logger.debug("growth_channel_edit_skipped_unchanged", channel_id=channel_id,
+                             message_id=message_id, step="edit")
+            else:
+                logger.error("growth_channel_publish_failed", channel_id=channel_id, step="edit",
+                             exception_type=type(exc).__name__, message=str(exc)[:200])
+                continue
+        post["caption_signature"] = caption_signature
+        post["markup_signature"] = markup_signature
+        signature_updates[(channel_id, message_id)] = {
+            "caption_signature": caption_signature,
+            "markup_signature": markup_signature,
+        }
+    await _save_post_signatures(round_copy.id, signature_updates)
 
 
 async def _member_check(bot, user_id: int, channels: list[str]) -> bool:
@@ -467,19 +566,41 @@ async def _announce_winner(round_obj: GrowthRound, bot, winner: GrowthWinner | N
                     "A winner has been selected. The prize is a free RDP or VPS."
                     if winner else "No eligible winner this round.")
     success = 0
-    for post in round_obj.published_messages or []:
+    posts = [dict(post) for post in round_obj.published_messages or []]
+    signature_updates: dict[tuple[str, int], dict[str, str]] = {}
+    for post in posts:
+        channel_id = str(post["chat_id"])
+        message_id = int(post["message_id"])
+        caption = f"Prize: one free RDP or VPS.\n\n{round_obj.challenge_text[:650]}\n\n{announcement}"[:1024]
+        caption_signature = _message_signature(caption)
+        markup_signature = _markup_signature(None)
+        if (post.get("caption_signature") == caption_signature
+                and post.get("markup_signature") == markup_signature):
+            logger.debug("growth_channel_edit_skipped_unchanged", channel_id=channel_id,
+                         message_id=message_id, step="announce")
+            success += 1
+            continue
         try:
-            await bot.edit_message_caption(chat_id=post["chat_id"], message_id=int(post["message_id"]),
-                caption=f"Prize: one free RDP or VPS.\n\n{round_obj.challenge_text[:650]}\n\n{announcement}"[:1024],
-                parse_mode=None, reply_markup=None)
+            await bot.edit_message_caption(chat_id=channel_id, message_id=message_id,
+                caption=caption, parse_mode=None, reply_markup=None)
             success += 1
         except Exception as exc:
-            if "message is not modified" in str(exc).lower():
+            if _is_message_not_modified(exc):
+                logger.debug("growth_channel_edit_skipped_unchanged", channel_id=channel_id,
+                             message_id=message_id, step="announce")
                 success += 1
             else:
                 logger.warning("growth_winner_announcement_failed", channel_id=post.get("chat_id"),
                                exception_type=type(exc).__name__, message=str(exc)[:160])
-    return success == len(round_obj.published_messages or []) and success > 0
+                continue
+        post["caption_signature"] = caption_signature
+        post["markup_signature"] = markup_signature
+        signature_updates[(channel_id, message_id)] = {
+            "caption_signature": caption_signature,
+            "markup_signature": markup_signature,
+        }
+    await _save_post_signatures(round_obj.id, signature_updates)
+    return success == len(posts) and success > 0
 
 
 async def finalize_growth_round(round_id: str, now: datetime | None = None) -> dict:
