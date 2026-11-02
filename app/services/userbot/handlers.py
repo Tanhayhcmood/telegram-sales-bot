@@ -31,7 +31,9 @@ from app.services.sales.payment import (
 )
 from app.services.sales.quick_support import get_quick_support_reply
 from app.services.sales.order_flow import (
+    append_support_reference,
     extract_plan,
+    get_or_create_support_code,
     get_checkout_context_prompt,
     get_order_state,
     get_order_status_reply,
@@ -101,7 +103,20 @@ async def _send_customer_text(event, user_id: int, text: str, *, ai_generated: b
     )
 
 
-async def _send_fixed_reply(session, conv_id, event, user_id: int, text: str, deadline: float, order_id: str | None = None):
+async def _send_fixed_reply(
+    session,
+    conv_id,
+    event,
+    user_id: int,
+    text: str,
+    deadline: float,
+    order_id: str | None = None,
+    support_code: str | None = None,
+    language: str = "en",
+    announce_support_code: bool = False,
+):
+    if announce_support_code:
+        text = append_support_reference(text, support_code, language)
     await save_message(session, conv_id, None, "outbound", text, ai_generated=False)
     await session.commit()
     try:
@@ -192,12 +207,20 @@ def _fallback_reply(language: str, user_id: int, text: str) -> str:
     return options[seed % len(options)]
 
 
-async def _notify_payment_receipt(event, sender, order_state: dict, caption: str, has_media: bool) -> None:
+async def _notify_payment_receipt(
+    event,
+    sender,
+    order_state: dict,
+    caption: str,
+    has_media: bool,
+    support_code: str | None = None,
+) -> None:
     """Forward a submitted receipt to configured operators without exposing secrets."""
     order_id = order_state.get("order_id", "unknown")
     note = (
         "🧾 Payment receipt submitted\n"
         f"Order: `{order_id}`\n"
+        f"Support: `{support_code or 'unassigned'}`\n"
         f"Customer: `{sender.id}`"
     )
     if caption.strip():
@@ -396,56 +419,86 @@ async def _handle_private_message(
             conv.id,
             limit=max(settings.CONVERSATION_HISTORY_LIMIT - 1, 0),
         )
+        support_code, support_code_created = get_or_create_support_code(conv)
+        announce_support_code = support_code_created or not any(
+            message.get("role") == "assistant" for message in history_before_current
+        )
         await save_message(session, conv.id, event.message.id, "inbound", inbound_content)
         await session.flush()
         order_state = get_order_state(customer)
         order_id = order_state.get("order_id")
+
+        async def send_first_reply(reply_text: str) -> None:
+            await _send_fixed_reply(
+                session,
+                conv.id,
+                event,
+                user_id,
+                reply_text,
+                reply_deadline,
+                order_id,
+                support_code=support_code,
+                language=language,
+                announce_support_code=announce_support_code,
+            )
+
         receipt_event = is_payment_receipt_message(text, has_media=has_media, stage=order_state.get("stage"))
         forwarded = bool(getattr(event.message, "fwd_from", None))
 
         # Forwarded text, prompt injection, and encoded payloads are untrusted.
         if forwarded or (is_prompt_injection(text) and not receipt_event):
-            await record_suspicious_attempt(user_id, text, "forwarded_or_prompt_injection", order_id)
-            await _send_fixed_reply(session, conv.id, event, user_id, SAFE_FALLBACK, reply_deadline, order_id)
+            await record_suspicious_attempt(
+                user_id, text, "forwarded_or_prompt_injection", order_id, support_code=support_code
+            )
+            await send_first_reply(SAFE_FALLBACK)
             return
         if receipt_event and is_prompt_injection(text):
-            await record_suspicious_attempt(user_id, text, "untrusted_receipt_caption", order_id)
+            await record_suspicious_attempt(
+                user_id, text, "untrusted_receipt_caption", order_id, support_code=support_code
+            )
 
         # Free/trial/test/giveaway/discounted server requests use fixed copy; they
         # never reach the model or cause provisioning.
         if not receipt_event and is_free_server_request(text):
             free_reply = get_free_server_reply(text, language) or support_handoff(language)
-            await _send_fixed_reply(session, conv.id, event, user_id, free_reply, reply_deadline, order_id)
+            await send_first_reply(free_reply)
             return
 
         # Delivery requests can only reach the separate paid-order module.
         if not receipt_event and is_delivery_request(text):
             if not order_id:
                 payment_reply = PAYMENT_NOT_CONFIRMED_FA if language == "fa" else PAYMENT_NOT_CONFIRMED_EN
-                await _send_fixed_reply(session, conv.id, event, user_id, payment_reply, reply_deadline, order_id)
+                await send_first_reply(payment_reply)
                 return
             delivery_result = await deliver_paid_order(str(order_id), user_id, event.reply, language)
             if delivery_result == "delivered":
                 await session.commit()
                 return
-            await _send_fixed_reply(session, conv.id, event, user_id, delivery_result, reply_deadline, order_id)
+            await send_first_reply(delivery_result)
             return
 
         if not receipt_event and is_support_request(text):
-            await notify_admins_once(user_id, text, "support_handoff", order_id)
-            await _send_fixed_reply(session, conv.id, event, user_id, support_handoff(language), reply_deadline, order_id)
+            await notify_admins_once(
+                user_id, text, "support_handoff", order_id, support_code=support_code
+            )
+            await send_first_reply(support_handoff(language))
             return
 
         if not receipt_event and outbound_reason(text):
-            await record_suspicious_attempt(user_id, text, "sensitive_or_secret_input", order_id)
-            await _send_fixed_reply(session, conv.id, event, user_id, SAFE_FALLBACK, reply_deadline, order_id)
+            await record_suspicious_attempt(
+                user_id, text, "sensitive_or_secret_input", order_id, support_code=support_code
+            )
+            await send_first_reply(SAFE_FALLBACK)
             return
 
         # Screenshots are never OCR'd or passed to the model. Payment receipts
         # are handled by the existing human-verification path below.
         if has_media and not receipt_event:
-            await notify_admins_once(user_id, text or "[image/media attachment]", "untrusted_media_handoff", order_id)
-            await _send_fixed_reply(session, conv.id, event, user_id, support_handoff(language), reply_deadline, order_id)
+            await notify_admins_once(
+                user_id, text or "[image/media attachment]", "untrusted_media_handoff", order_id,
+                support_code=support_code,
+            )
+            await send_first_reply(support_handoff(language))
             return
 
         # ── Greeting fast-path ─────────────────────────────────────────────
@@ -456,6 +509,8 @@ async def _handle_private_message(
             if msg_count_check == 0:
                 greeting_reply = GREETING_REPLIES.get(language)
                 if greeting_reply:
+                    if announce_support_code:
+                        greeting_reply = append_support_reference(greeting_reply, support_code, language)
                     await save_message(session, conv.id, None, "outbound", greeting_reply, ai_generated=False)
                     await session.commit()
                     try:
@@ -483,13 +538,17 @@ async def _handle_private_message(
                 plan=order_state.get("plan") or extract_plan(text, history_before_current),
                 receipt_message_id=str(event.message.id),
                 receipt_has_transaction_reference=has_transaction_reference(text),
+                support_code=support_code,
             )
+            order_id = order_state.get("order_id") or order_id
             await mark_followup_done(session, customer.id)
             receipt_reply = get_receipt_received_reply(
                 language,
                 order_state,
                 has_transaction_reference(text),
             )
+            if announce_support_code:
+                receipt_reply = append_support_reference(receipt_reply, support_code, language)
             await save_message(
                 session,
                 conv.id,
@@ -505,6 +564,7 @@ async def _handle_private_message(
                 order_state,
                 text,
                 has_media,
+                support_code=support_code,
             )
             try:
                 await wait_for_reply_deadline(reply_deadline)
@@ -562,13 +622,16 @@ async def _handle_private_message(
                 "payment_pending",
                 plan=selected_plan,
                 payment_method=payment_method,
+                support_code=support_code,
             )
         elif payment_reply and is_purchase_intent(text):
             order_state = update_order_state(
                 customer,
                 "payment_method_selection",
                 plan=selected_plan,
+                support_code=support_code,
             )
+        order_id = order_state.get("order_id") or order_id
         payment_addendum = payment_reply if payment_reply and not payment_only else None
         if payment_reply and payment_only:
             direct_reply = payment_reply
@@ -588,15 +651,20 @@ async def _handle_private_message(
                 customer,
                 "plan_recommended",
                 plan=selected_plan,
+                support_code=support_code,
             )
+
+        order_id = order_state.get("order_id") or order_id
 
         if payment_address_sent and payment_method:
             await schedule_followup(session, customer.id, stage="day_1")
 
         # Deterministic answers stay available; pause or throttle model calls.
         if not direct_reply and not await guard_enabled():
-            await notify_admins_once(user_id, text, "guard_paused", order_id)
-            await _send_fixed_reply(session, conv.id, event, user_id, support_handoff(language), reply_deadline, order_id)
+            await notify_admins_once(
+                user_id, text, "guard_paused", order_id, support_code=support_code
+            )
+            await send_first_reply(support_handoff(language))
             return
         if not direct_reply and not await claim_ai_reply_slot(user_id):
             logger.info("customer_ai_cooldown", user_id=user_id)
@@ -790,7 +858,16 @@ async def _handle_private_message(
                 reply_is_ai = False
 
         if reply_is_ai:
-            reply = await filter_ai_outbound(user_id, reply, order_id)
+            reply = await filter_ai_outbound(
+                user_id, reply, order_id, support_code=support_code
+            )
+
+        if announce_support_code:
+            if payment_reply and reply == payment_reply and not payment_addendum:
+                reply = append_support_reference(reply, support_code, language)
+                payment_reply = reply
+            else:
+                reply = append_support_reference(reply, support_code, language)
 
         if payment_addendum:
             reply = f"{reply.rstrip()}\n\n{payment_addendum}"

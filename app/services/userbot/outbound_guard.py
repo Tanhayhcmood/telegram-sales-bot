@@ -163,7 +163,13 @@ async def guard_log() -> list[dict]:
         return []
 
 
-async def notify_admins_once(user_id: int, text: str, reason: str, order_id: str | None = None) -> None:
+async def notify_admins_once(
+    user_id: int,
+    text: str,
+    reason: str,
+    order_id: str | None = None,
+    support_code: str | None = None,
+) -> None:
     try:
         from app.cache.redis_client import get_redis
         redis = await get_redis()
@@ -174,7 +180,11 @@ async def notify_admins_once(user_id: int, text: str, reason: str, order_id: str
         bot = get_bot()
         if bot is None:
             return
-        summary = f"Security handoff: user {int(user_id)}; reason={reason}; order={order_id or 'none'}; text={_redacted_excerpt(text)}"
+        summary = (
+            f"Security handoff: user {int(user_id)}; reason={reason}; "
+            f"order={order_id or 'none'}; support={support_code or 'none'}; "
+            f"text={_redacted_excerpt(text)}"
+        )
         for admin_id in settings.admin_ids:
             try:
                 await bot.send_message(chat_id=admin_id, text=summary, parse_mode=None)
@@ -184,14 +194,31 @@ async def notify_admins_once(user_id: int, text: str, reason: str, order_id: str
         logger.warning("security_admin_notice_unavailable error=%s", type(error).__name__)
 
 
-async def record_suspicious_attempt(user_id: int, text: str, reason: str, order_id: str | None = None) -> None:
-    event = {"at": datetime.now(timezone.utc).isoformat(), "user_id": int(user_id), "reason": reason, "text": _redacted_excerpt(text)}
+async def record_suspicious_attempt(
+    user_id: int,
+    text: str,
+    reason: str,
+    order_id: str | None = None,
+    support_code: str | None = None,
+) -> None:
+    event = {
+        "at": datetime.now(timezone.utc).isoformat(),
+        "user_id": int(user_id),
+        "reason": reason,
+        "support_code": support_code,
+        "text": _redacted_excerpt(text),
+    }
     await _store_event(_SUSPICIOUS_KEY, event)
     logger.warning("customer_suspicious_attempt %s", json.dumps(event, ensure_ascii=False))
-    await notify_admins_once(user_id, text, reason, order_id)
+    await notify_admins_once(user_id, text, reason, order_id, support_code)
 
 
-async def filter_ai_outbound(user_id: int, text: str, order_id: str | None = None) -> str:
+async def filter_ai_outbound(
+    user_id: int,
+    text: str,
+    order_id: str | None = None,
+    support_code: str | None = None,
+) -> str:
     # The sensitive-output filter is non-bypassable, even when AI replies are paused.
     reason = outbound_reason(text)
     if not reason:
@@ -199,7 +226,7 @@ async def filter_ai_outbound(user_id: int, text: str, order_id: str | None = Non
     event = {"at": datetime.now(timezone.utc).isoformat(), "user_id": int(user_id), "reason": reason, "text": _redacted_excerpt(text)}
     await _store_event(_BLOCKS_KEY, event)
     logger.warning("customer_ai_outbound_blocked %s", json.dumps(event, ensure_ascii=False))
-    await notify_admins_once(user_id, text, f"outbound:{reason}", order_id)
+    await notify_admins_once(user_id, text, f"outbound:{reason}", order_id, support_code)
     return SAFE_FALLBACK
 
 

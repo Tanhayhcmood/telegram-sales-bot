@@ -1,4 +1,4 @@
-"""Telegram read acknowledgements and human-paced reply deadlines."""
+"""Telegram read acknowledgements and short, variable reply deadlines."""
 from __future__ import annotations
 
 import random
@@ -6,11 +6,11 @@ from asyncio import sleep
 from time import monotonic
 
 
-REPLY_DELAY_SECONDS = (30.0, 35.0)
+REPLY_DELAY_SECONDS = (1.5, 3.5)
 
 
 def new_reply_deadline() -> float:
-    """Pick a 30-35 second response deadline measured from message receipt."""
+    """Pick a short response deadline measured from message receipt."""
     return monotonic() + random.uniform(*REPLY_DELAY_SECONDS)
 
 
