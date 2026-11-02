@@ -1,6 +1,6 @@
 import unittest
 
-from app.services.ai.prompts import get_system_prompt
+from app.services.ai.prompts import _SYSTEM_BASE, get_system_prompt
 
 
 class SalesPromptRulesTests(unittest.TestCase):
@@ -9,7 +9,24 @@ class SalesPromptRulesTests(unittest.TestCase):
 
         self.assertIn("You are Sara", prompt)
         self.assertIn("answer naturally and honestly", prompt)
+        self.assertIn("Never claim to be human", prompt)
+        self.assertNotIn("virtual sales assistant", prompt)
         self.assertIn("Do not greet again", prompt)
+
+    def test_legacy_language_prompts_do_not_instruct_identity_deception(self):
+        all_prompts = "\n".join(_SYSTEM_BASE.values()).casefold()
+
+        for phrase in (
+            "real human",
+            "echter mensch",
+            "vrai humain",
+            "persona real",
+            "gerçek bir danışman",
+            "реальный консультант",
+            "никогда не раскрывай, что ты бот",
+            "ne jamais se révéler comme bot",
+        ):
+            self.assertNotIn(phrase, all_prompts)
 
     def test_customer_context_skips_discovery(self):
         prompt = get_system_prompt("fa", customer_provided_context=True)

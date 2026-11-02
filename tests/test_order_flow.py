@@ -3,7 +3,9 @@ from types import SimpleNamespace
 
 from app.services.ai.prompts import get_system_prompt
 from app.services.sales.order_flow import (
+    append_support_reference,
     extract_plan,
+    get_or_create_support_code,
     get_checkout_followup,
     get_order_status_reply,
     get_payment_next_step,
@@ -34,13 +36,45 @@ class OrderFlowTests(unittest.TestCase):
         self.assertIn("به‌تنهایی به معنی تأیید پرداخت نیست", reply)
         self.assertNotIn("سرویس فعال شد", reply)
 
-    def test_order_state_keeps_plan_and_stage_in_existing_metadata(self):
+    def test_support_code_is_stable_per_conversation_and_persisted(self):
+        conversation = SimpleNamespace(metadata_={})
+
+        first_code, created = get_or_create_support_code(conversation)
+        second_code, created_again = get_or_create_support_code(conversation)
+
+        self.assertRegex(first_code, r"^SUP-[A-F0-9]{10}$")
+        self.assertTrue(created)
+        self.assertEqual(second_code, first_code)
+        self.assertFalse(created_again)
+        self.assertEqual(conversation.metadata_["support_code"], first_code)
+
+    def test_support_code_is_unique_between_conversations(self):
+        first, _ = get_or_create_support_code(SimpleNamespace(metadata_={}))
+        second, _ = get_or_create_support_code(SimpleNamespace(metadata_={}))
+        self.assertNotEqual(first, second)
+
+    def test_support_reference_is_localized_and_not_duplicated(self):
+        fa = append_support_reference("سلام", "SUP-0123456789", "fa")
+        en = append_support_reference("Hello", "SUP-0123456789", "en")
+
+        self.assertIn("کد پیگیری پشتیبانی: SUP-0123456789", fa)
+        self.assertIn("Support reference: SUP-0123456789", en)
+        self.assertEqual(append_support_reference(fa, "SUP-0123456789", "fa"), fa)
+
+    def test_order_state_keeps_plan_stage_and_support_code(self):
         customer = SimpleNamespace(metadata_={})
 
-        state = update_order_state(customer, "payment_pending", plan="POWER", payment_method="ETH")
+        state = update_order_state(
+            customer,
+            "payment_pending",
+            plan="POWER",
+            payment_method="ETH",
+            support_code="SUP-0123456789",
+        )
 
         self.assertEqual(state["stage"], "payment_pending")
         self.assertEqual(state["plan"], "POWER")
+        self.assertEqual(state["support_code"], "SUP-0123456789")
         self.assertEqual(customer.metadata_["order_flow"]["payment_method"], "ETH")
 
     def test_status_and_followup_are_specific_to_payment_waiting(self):

@@ -110,6 +110,28 @@ def get_order_state(customer) -> dict:
     return dict(state) if isinstance(state, dict) else {}
 
 
+def get_or_create_support_code(conversation) -> tuple[str, bool]:
+    """Persist one stable support reference in the conversation's JSON metadata."""
+    metadata = dict(getattr(conversation, "metadata_", None) or {})
+    existing = str(metadata.get("support_code") or "").strip().upper()
+    if re.fullmatch(r"SUP-[A-F0-9]{10}", existing):
+        return existing, False
+
+    support_code = f"SUP-{uuid.uuid4().hex[:10].upper()}"
+    metadata["support_code"] = support_code
+    conversation.metadata_ = metadata
+    return support_code, True
+
+
+def append_support_reference(text: str, support_code: str | None, language: str) -> str:
+    """Append the support reference without repeating it in an existing reply."""
+    reply = (text or "").rstrip()
+    if not support_code or support_code in reply:
+        return reply
+    label = "کد پیگیری پشتیبانی" if language == "fa" else "Support reference"
+    return f"{reply}\n\n{label}: {support_code}" if reply else f"{label}: {support_code}"
+
+
 def update_order_state(customer, stage: str, **updates) -> dict:
     """Persist a small checkout state machine in existing JSONB metadata."""
     if stage not in CHECKOUT_STAGES:
