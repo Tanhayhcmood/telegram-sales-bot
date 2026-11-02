@@ -94,7 +94,7 @@ logger = get_logger(__name__)
 
 async def _send_customer_text(event, user_id: int, text: str, *, ai_generated: bool = False, order_id: str | None = None, **kwargs):
     await send_customer_message(
-        event.reply,
+        event.respond,
         user_id,
         text,
         ai_generated=ai_generated,
@@ -321,8 +321,7 @@ def _build_model_messages(
     limit: int,
 ) -> list[dict]:
     """Build a bounded, ordered chat-completions payload for one conversation."""
-    previous_limit = max(limit - 1, 0)
-    previous = history[-previous_limit:] if previous_limit else []
+    previous = history[-limit:] if limit > 0 else []
     return previous + [{"role": "user", "content": current_text}]
 
 
@@ -417,7 +416,7 @@ async def _handle_private_message(
         history_before_current = await get_recent_messages(
             session,
             conv.id,
-            limit=max(settings.CONVERSATION_HISTORY_LIMIT - 1, 0),
+            limit=10,
         )
         support_code, support_code_created = get_or_create_support_code(conv)
         announce_support_code = support_code_created or not any(
@@ -470,7 +469,7 @@ async def _handle_private_message(
                 payment_reply = PAYMENT_NOT_CONFIRMED_FA if language == "fa" else PAYMENT_NOT_CONFIRMED_EN
                 await send_first_reply(payment_reply)
                 return
-            delivery_result = await deliver_paid_order(str(order_id), user_id, event.reply, language)
+            delivery_result = await deliver_paid_order(str(order_id), user_id, event.respond, language)
             if delivery_result == "delivered":
                 await session.commit()
                 return
@@ -584,7 +583,7 @@ async def _handle_private_message(
         messages = _build_model_messages(
             history,
             text,
-            settings.CONVERSATION_HISTORY_LIMIT,
+            10,
         )
         quick_support_reply = get_quick_support_reply(text, language)
         order_status_reply = (
@@ -774,6 +773,11 @@ async def _handle_private_message(
             if message.get("role") == "assistant" and message.get("content")
         ]
         discovery_question_count = _count_opening_discovery_questions(previous_replies)
+        suggested_plans_key = f"sales:suggested_plans:{account_id}:{user_id}"
+        suggested_plans_raw = await cache_get(suggested_plans_key) or ""
+        suggested_plans = [
+            item.strip() for item in str(suggested_plans_raw).splitlines() if item.strip()
+        ]
         system_prompt = get_system_prompt(
             language,
             is_first_reply=is_first_reply,
@@ -785,6 +789,16 @@ async def _handle_private_message(
                 or has_customer_context_hint(text)
                 or bool(direct_reply)
             ),
+        )
+        system_prompt += (
+            "\n\nقواعد پاسخ‌دهی:\n"
+            "- اگر زبان گفتگو فارسی است، محاوره‌ای و در ۱ تا ۳ جمله پاسخ بده و فقط به آخرین پیام مشتری مربوط باش.\n"
+            "- فقط در پیام اول سلام کن.\n"
+            "- اگر مشتری گفت «گفتم که»، کوتاه عذرخواهی کن و بعد مستقیم پاسخ بده.\n"
+            "- اگر پرسید رباتی، صادقانه بگو دستیار هوشمند هستی.\n"
+            "- چیزی را که نمی‌دانی نساز.\n"
+            f"- پلن‌های قبلاً پیشنهادشده: {', '.join(suggested_plans) if suggested_plans else 'هیچ‌کدام'}.\n"
+            "- پلن پیشنهادشده را تکرار نکن؛ پلن مناسب بعدی را از فهرست پلن‌ها بده؛ اگر پلن دیگری نیست صادقانه بگو."
         )
         checkout_prompt = get_checkout_context_prompt(order_state, language)
         full_system = f"{system_prompt}\n\n{context_prompt}\n\n{checkout_prompt}{objection_hint}"
@@ -871,6 +885,19 @@ async def _handle_private_message(
 
         if payment_addendum:
             reply = f"{reply.rstrip()}\n\n{payment_addendum}"
+
+        suggested_plan = extract_plan(reply, [])
+        if suggested_plan:
+            suggested_plan = str(suggested_plan).strip()
+            if suggested_plan and suggested_plan.casefold() not in {
+                item.casefold() for item in suggested_plans
+            }:
+                suggested_plans.append(suggested_plan)
+                await cache_set(
+                    suggested_plans_key,
+                    "\n".join(suggested_plans),
+                    ttl=settings.CONVERSATION_ACTIVE_TTL,
+                )
 
         await save_message(
             session, conv.id, None, "outbound", reply,
