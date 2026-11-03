@@ -63,6 +63,14 @@ def _contains_letters(text: str) -> bool:
     return any(character.isalpha() for character in text)
 
 
+def _has_dominant_persian_script(text: str) -> bool:
+    letters = [character for character in text if character.isalpha()]
+    if not letters:
+        return False
+    persian_script_letters = sum("\u0600" <= character <= "\u06ff" for character in letters)
+    return persian_script_letters / len(letters) >= 0.7
+
+
 async def detect_language(text: str, fallback_language: str | None = None) -> str:
     """Return the message language, preserving context for language-neutral replies.
 
@@ -73,7 +81,7 @@ async def detect_language(text: str, fallback_language: str | None = None) -> st
     text = (text or "").strip()
     if not text:
         return normalize_language_code(fallback_language)
-    if _looks_persian(text):
+    if _looks_persian(text) or _has_dominant_persian_script(text):
         return "fa"
     if not _contains_letters(text):
         return normalize_language_code(fallback_language)
