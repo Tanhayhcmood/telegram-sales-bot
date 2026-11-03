@@ -605,7 +605,7 @@ async def _handle_private_message(
             None if quick_support_reply else (
                 order_status_reply
                 or payment_problem_reply
-                or get_direct_sales_reply(text, history, language)
+                or get_direct_sales_reply(text, history_before_current, language)
             )
         )
         discount_reply = None if quick_support_reply else get_discount_reply(text, history, language)
