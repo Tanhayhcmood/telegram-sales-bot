@@ -2,81 +2,113 @@
   "en": {
     "region": "Region",
     "updated": "Updated",
-    "template": "{header_emoji} <b>LIVE VPS OFFERS</b>\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>Private VPS plans</b>\nAsk about current specifications, regions, and availability.\nPlan details are shared privately with customers.</blockquote>\n<b>How to get started</b>\nMessage @{admin_username} to discuss a plan.\n\n<b>{sales_text}</b>",
+    "template": "{header_emoji} <b>LIVE VPS OFFERS</b>\n🧠 <b>{cpu_label}:</b> {cpu}\n💾 <b>{ram_label}:</b> {ram}\n🖥️ <b>{os_label}:</b> {os_name}\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>Private VPS plans</b>\nAsk about current specifications, regions, and availability.\nPlan details are shared privately with customers.</blockquote>\n<b>How to get started</b>\nMessage @{admin_username} to discuss a plan.\n\n<b>{sales_text}</b>",
     "sales": [
       "Looking for a private VPS? Ask @{admin_username} about current plans.",
       "Need a server for your project? Check availability with @{admin_username}.",
       "Your next VPS plan starts with a quick chat: @{admin_username}."
-    ]
+    ],
+    "cpu": "CPU",
+    "ram": "RAM",
+    "os": "OS",
+    "specs_request": "Ask for specs"
   },
   "fa": {
     "region": "منطقه",
     "updated": "به‌روزرسانی",
-    "template": "{header_emoji} <b>پیشنهادهای VPS فعال</b>\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>پلن‌های VPS خصوصی</b>\nبرای مشخصات، مناطق و موجودی فعلی سؤال کنید.\nجزئیات پلن به‌صورت خصوصی ارائه می‌شود.</blockquote>\n<b>شروع کار</b>\nبرای انتخاب پلن به @{admin_username} پیام دهید.\n\n<b>{sales_text}</b>",
+    "template": "{header_emoji} <b>پیشنهادهای VPS فعال</b>\n🧠 <b>{cpu_label}:</b> {cpu}\n💾 <b>{ram_label}:</b> {ram}\n🖥️ <b>{os_label}:</b> {os_name}\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>پلن‌های VPS خصوصی</b>\nبرای مشخصات، مناطق و موجودی فعلی سؤال کنید.\nجزئیات پلن به‌صورت خصوصی ارائه می‌شود.</blockquote>\n<b>شروع کار</b>\nبرای انتخاب پلن به @{admin_username} پیام دهید.\n\n<b>{sales_text}</b>",
     "sales": [
       "VPS خصوصی می‌خواهید؟ درباره پلن‌های فعلی از @{admin_username} بپرسید.",
       "برای پروژه‌تان سرور لازم دارید؟ موجودی را با @{admin_username} بررسی کنید.",
       "انتخاب پلن VPS با یک گفت‌وگوی کوتاه شروع می‌شود: @{admin_username}."
-    ]
+    ],
+    "cpu": "پردازنده",
+    "ram": "حافظه",
+    "os": "سیستم‌عامل",
+    "specs_request": "برای مشخصات پیام دهید"
   },
   "ar": {
     "region": "المنطقة",
     "updated": "آخر تحديث",
-    "template": "{header_emoji} <b>عروض VPS المتاحة</b>\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>خطط VPS خاصة</b>\nاسأل عن المواصفات والمناطق والتوفر الحالي.\nتُشارك تفاصيل الخطة بشكل خاص مع العملاء.</blockquote>\n<b>كيف تبدأ</b>\nراسل @{admin_username} لمناقشة الخطة المناسبة.\n\n<b>{sales_text}</b>",
+    "template": "{header_emoji} <b>عروض VPS المتاحة</b>\n🧠 <b>{cpu_label}:</b> {cpu}\n💾 <b>{ram_label}:</b> {ram}\n🖥️ <b>{os_label}:</b> {os_name}\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>خطط VPS خاصة</b>\nاسأل عن المواصفات والمناطق والتوفر الحالي.\nتُشارك تفاصيل الخطة بشكل خاص مع العملاء.</blockquote>\n<b>كيف تبدأ</b>\nراسل @{admin_username} لمناقشة الخطة المناسبة.\n\n<b>{sales_text}</b>",
     "sales": [
       "تبحث عن VPS خاص؟ اسأل @{admin_username} عن الخطط الحالية.",
       "هل تحتاج خادماً لمشروعك؟ تحقق من التوفر مع @{admin_username}.",
       "تبدأ خطتك التالية برسالة قصيرة إلى @{admin_username}."
-    ]
+    ],
+    "cpu": "المعالج",
+    "ram": "الذاكرة",
+    "os": "النظام",
+    "specs_request": "راسلنا للمواصفات"
   },
   "tr": {
     "region": "Bölge",
     "updated": "Güncellendi",
-    "template": "{header_emoji} <b>CANLI VPS TEKLİFLERİ</b>\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>Özel VPS planları</b>\nGüncel özellikleri, bölgeleri ve uygunluğu sorun.\nPlan ayrıntıları müşterilerle özel olarak paylaşılır.</blockquote>\n<b>Nasıl başlanır</b>\nBir planı görüşmek için @{admin_username} hesabına yazın.\n\n<b>{sales_text}</b>",
+    "template": "{header_emoji} <b>CANLI VPS TEKLİFLERİ</b>\n🧠 <b>{cpu_label}:</b> {cpu}\n💾 <b>{ram_label}:</b> {ram}\n🖥️ <b>{os_label}:</b> {os_name}\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>Özel VPS planları</b>\nGüncel özellikleri, bölgeleri ve uygunluğu sorun.\nPlan ayrıntıları müşterilerle özel olarak paylaşılır.</blockquote>\n<b>Nasıl başlanır</b>\nBir planı görüşmek için @{admin_username} hesabına yazın.\n\n<b>{sales_text}</b>",
     "sales": [
       "Özel VPS mi arıyorsunuz? Güncel planları @{admin_username} hesabına sorun.",
       "Projeniz için sunucu mu lazım? Uygunluğu @{admin_username} ile kontrol edin.",
       "Yeni VPS planınız kısa bir mesajla başlar: @{admin_username}."
-    ]
+    ],
+    "cpu": "CPU",
+    "ram": "RAM",
+    "os": "İşletim sistemi",
+    "specs_request": "Özellikleri sorun"
   },
   "ru": {
     "region": "Регион",
     "updated": "Обновлено",
-    "template": "{header_emoji} <b>АКТУАЛЬНЫЕ ПРЕДЛОЖЕНИЯ VPS</b>\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>Частные тарифы VPS</b>\nУточните характеристики, регионы и наличие.\nПодробности тарифа предоставляются клиентам лично.</blockquote>\n<b>Как начать</b>\nНапишите @{admin_username}, чтобы обсудить тариф.\n\n<b>{sales_text}</b>",
+    "template": "{header_emoji} <b>АКТУАЛЬНЫЕ ПРЕДЛОЖЕНИЯ VPS</b>\n🧠 <b>{cpu_label}:</b> {cpu}\n💾 <b>{ram_label}:</b> {ram}\n🖥️ <b>{os_label}:</b> {os_name}\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>Частные тарифы VPS</b>\nУточните характеристики, регионы и наличие.\nПодробности тарифа предоставляются клиентам лично.</blockquote>\n<b>Как начать</b>\nНапишите @{admin_username}, чтобы обсудить тариф.\n\n<b>{sales_text}</b>",
     "sales": [
       "Нужен частный VPS? Узнайте о текущих тарифах у @{admin_username}.",
       "Нужен сервер для проекта? Проверьте наличие у @{admin_username}.",
       "Выбор VPS начинается с короткого сообщения: @{admin_username}."
-    ]
+    ],
+    "cpu": "Процессор",
+    "ram": "ОЗУ",
+    "os": "ОС",
+    "specs_request": "Уточните характеристики"
   },
   "de": {
     "region": "Region",
     "updated": "Aktualisiert",
-    "template": "{header_emoji} <b>AKTUELLE VPS-ANGEBOTE</b>\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>Private VPS-Tarife</b>\nFragen Sie nach aktuellen Spezifikationen, Regionen und Verfügbarkeit.\nTarifdetails werden Kunden privat mitgeteilt.</blockquote>\n<b>So starten Sie</b>\nSchreiben Sie @{admin_username}, um einen Tarif zu besprechen.\n\n<b>{sales_text}</b>",
+    "template": "{header_emoji} <b>AKTUELLE VPS-ANGEBOTE</b>\n🧠 <b>{cpu_label}:</b> {cpu}\n💾 <b>{ram_label}:</b> {ram}\n🖥️ <b>{os_label}:</b> {os_name}\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>Private VPS-Tarife</b>\nFragen Sie nach aktuellen Spezifikationen, Regionen und Verfügbarkeit.\nTarifdetails werden Kunden privat mitgeteilt.</blockquote>\n<b>So starten Sie</b>\nSchreiben Sie @{admin_username}, um einen Tarif zu besprechen.\n\n<b>{sales_text}</b>",
     "sales": [
       "Sie suchen einen privaten VPS? Fragen Sie @{admin_username} nach aktuellen Tarifen.",
       "Sie brauchen einen Server für Ihr Projekt? Prüfen Sie die Verfügbarkeit bei @{admin_username}.",
       "Ihr nächster VPS beginnt mit einer kurzen Nachricht: @{admin_username}."
-    ]
+    ],
+    "cpu": "CPU",
+    "ram": "RAM",
+    "os": "Betriebssystem",
+    "specs_request": "Spezifikationen anfragen"
   },
   "fr": {
     "region": "Région",
     "updated": "Mis à jour",
-    "template": "{header_emoji} <b>OFFRES VPS DU MOMENT</b>\n🌍 <b>{region_label} :</b> {location}\n🕒 <b>{updated_label} :</b> {time}\n\n<blockquote><b>Offres VPS privées</b>\nDemandez les caractéristiques, les régions et les disponibilités actuelles.\nLes détails des offres sont communiqués en privé aux clients.</blockquote>\n<b>Comment commencer</b>\nÉcrivez à @{admin_username} pour choisir une offre.\n\n<b>{sales_text}</b>",
+    "template": "{header_emoji} <b>OFFRES VPS DU MOMENT</b>\n🧠 <b>{cpu_label}:</b> {cpu}\n💾 <b>{ram_label}:</b> {ram}\n🖥️ <b>{os_label}:</b> {os_name}\n🌍 <b>{region_label} :</b> {location}\n🕒 <b>{updated_label} :</b> {time}\n\n<blockquote><b>Offres VPS privées</b>\nDemandez les caractéristiques, les régions et les disponibilités actuelles.\nLes détails des offres sont communiqués en privé aux clients.</blockquote>\n<b>Comment commencer</b>\nÉcrivez à @{admin_username} pour choisir une offre.\n\n<b>{sales_text}</b>",
     "sales": [
       "Vous cherchez un VPS privé ? Demandez les offres actuelles à @{admin_username}.",
       "Besoin d’un serveur pour votre projet ? Vérifiez les disponibilités avec @{admin_username}.",
       "Votre prochain VPS commence par un message à @{admin_username}."
-    ]
+    ],
+    "cpu": "CPU",
+    "ram": "RAM",
+    "os": "Système",
+    "specs_request": "Demandez les caractéristiques"
   },
   "es": {
     "region": "Región",
     "updated": "Actualizado",
-    "template": "{header_emoji} <b>OFERTAS VPS ACTUALES</b>\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>Planes de VPS privados</b>\nPregunta por especificaciones, regiones y disponibilidad actuales.\nLos detalles del plan se comparten en privado con los clientes.</blockquote>\n<b>Cómo empezar</b>\nEscribe a @{admin_username} para consultar un plan.\n\n<b>{sales_text}</b>",
+    "template": "{header_emoji} <b>OFERTAS VPS ACTUALES</b>\n🧠 <b>{cpu_label}:</b> {cpu}\n💾 <b>{ram_label}:</b> {ram}\n🖥️ <b>{os_label}:</b> {os_name}\n🌍 <b>{region_label}:</b> {location}\n🕒 <b>{updated_label}:</b> {time}\n\n<blockquote><b>Planes de VPS privados</b>\nPregunta por especificaciones, regiones y disponibilidad actuales.\nLos detalles del plan se comparten en privado con los clientes.</blockquote>\n<b>Cómo empezar</b>\nEscribe a @{admin_username} para consultar un plan.\n\n<b>{sales_text}</b>",
     "sales": [
       "¿Buscas un VPS privado? Consulta los planes actuales con @{admin_username}.",
       "¿Necesitas un servidor para tu proyecto? Verifica disponibilidad con @{admin_username}.",
       "Tu próximo VPS empieza con un mensaje a @{admin_username}."
-    ]
+    ],
+    "cpu": "CPU",
+    "ram": "RAM",
+    "os": "Sistema",
+    "specs_request": "Pregunta por las especificaciones"
   }
 }

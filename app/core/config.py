@@ -143,6 +143,9 @@ class Settings(BaseSettings):
     POST_JOIN_CHANNEL_URL: str = ""
     POST_SUPPORT_URL: str = "https://t.me/VPS24H"
     VPS_PROMO_LOCATION: str = "Ask support for current regions"
+    VPS_PROMO_CPU: str = ""
+    VPS_PROMO_RAM: str = ""
+    VPS_PROMO_OS_NAME: str = ""
 
     AI_FACT_EXTRACTION_INTERVAL: int = 10
 

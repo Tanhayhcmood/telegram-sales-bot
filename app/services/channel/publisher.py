@@ -435,6 +435,9 @@ async def publish_post(
             content, _ = build_vps_promo_post(
                 language=channel.language or "en",
                 location=settings.VPS_PROMO_LOCATION,
+                cpu=settings.VPS_PROMO_CPU,
+                ram=settings.VPS_PROMO_RAM,
+                os_name=settings.VPS_PROMO_OS_NAME,
                 admin_username=settings.POST_ADMIN_USERNAME,
                 seed=random.randint(0, 9_999_999),
             )

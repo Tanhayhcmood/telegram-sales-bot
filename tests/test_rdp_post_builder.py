@@ -33,6 +33,9 @@ class VpsPromoTemplateTests(unittest.TestCase):
         values = {
             "language": "en",
             "location": "Ask support for current regions",
+            "cpu": "4 vCPU",
+            "ram": "8 GB",
+            "os_name": "Ubuntu 24.04",
             "time_value": "06 Nov 2026 12:30",
             "admin_username": "VPS24H",
             "seed": 0,
@@ -61,6 +64,29 @@ class VpsPromoTemplateTests(unittest.TestCase):
         self.assertIn("Region &lt;West &amp; &quot;Central&quot;&gt;", caption)
         self.assertIn("06 &lt;script&gt; &amp; &quot;now&quot;", caption)
         self.assertIn("@&lt;team&amp;service&gt;", caption)
+
+    def test_configured_specs_are_rendered_and_escaped(self):
+        caption = self.render(
+            cpu="<8 vCPU>",
+            ram='16 GB & "fast"',
+            os_name="Ubuntu <24.04>",
+        )
+        self.assertIn("&lt;8 vCPU&gt;", caption)
+        self.assertIn("16 GB &amp; &quot;fast&quot;", caption)
+        self.assertIn("Ubuntu &lt;24.04&gt;", caption)
+        self.assertNotIn("{admin_username}", caption)
+
+    def test_missing_and_very_long_specs_keep_caption_compact(self):
+        caption = self.render(cpu="", ram="", os_name="")
+        self.assertIn("Ask for specs", caption)
+        long_caption = self.render(
+            location="&" * 5000,
+            cpu="&" * 5000,
+            ram="&" * 5000,
+            os_name="&" * 5000,
+        )
+        self.assertLessEqual(rdp_caption_utf16_length(long_caption), 1024)
+        self.assertEqual(fit_rdp_caption(long_caption), (long_caption, 0))
 
     def test_public_template_never_includes_scan_credentials_or_login_steps(self):
         caption, _ = build_rdp_post(
