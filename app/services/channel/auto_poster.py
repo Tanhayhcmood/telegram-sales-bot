@@ -1,21 +1,7 @@
-"""
-Auto-poster — only posts free RDP/VPS scan results.
+"""Auto-poster for localized VPS promotions.
 
-One post type only:
-  - RDP scanner finds a live free server → posts its credentials
-  - Scan fails or finds nothing → skips this cycle (no fallback AI posts)
-
-KEY DESIGN:
-  Each ready channel gets its OWN unique RDP server (different IP + country).
-  scan_for_rdp() pops randomly from the Redis pool so every call returns a
-  distinct IP. Results are pre-fetched for all channels before posting begins,
-  so a scan timeout on one channel never blocks the others.
-
-SYNC FIX (Jul 2026):
-  Some channels drift out of phase — their cooldown expires minutes before
-  other channels, so they get posted in isolation and fall permanently behind.
-  Solution: if any channel will be ready within SYNC_WINDOW_SECONDS, wait
-  for it before scanning so all channels post together in the same batch.
+Public posts are generic marketing copy and never use scanner results or
+contain server addresses, usernames, passwords, or connection instructions.
 """
 import asyncio
 import os
@@ -162,75 +148,46 @@ def _record_hash(content: str) -> None:
 
 
 async def _post_to_channel(userbot_manager, channel: TelegramChannel) -> bool:
-    """
-    Scan for a live RDP server and post it to a single channel.
-    Used by the admin 'post_now' button which posts one channel at a time.
-    For the auto-poster loop use _post_rdp_result_to_channel() instead
-    so the scan is shared across all channels in one cycle.
-    """
-    try:
-        from app.services.scanner.rdp_scanner import scan_for_rdp
-        rdp_result = await asyncio.wait_for(scan_for_rdp(), timeout=45.0)
-    except asyncio.TimeoutError:
-        logger.warning("rdp_scan_timeout_skipping_channel", channel=channel.display_name)
-        return False
-    except Exception as e:
-        logger.warning("rdp_scan_error_skipping_channel", channel=channel.display_name, error=str(e))
-        return False
-
-    if not rdp_result:
-        logger.info("rdp_scan_no_result_skipping", channel=channel.display_name)
-        return False
-
-    return await _post_rdp_result_to_channel(rdp_result, channel)
+    """Post a generic VPS promotion without scanning or publishing access data."""
+    del userbot_manager
+    return await _post_vps_promo_to_channel(channel)
 
 
 async def _post_rdp_result_to_channel(rdp_result: dict, channel: TelegramChannel) -> bool:
-    """
-    Post an already-scanned RDP result to a single channel.
-    Accepts a pre-scanned rdp_result so one scan can serve all channels
-    in the same cycle — no redundant scans, no blocked channels.
+    """Legacy adapter that intentionally discards scanner results."""
+    del rdp_result
+    return await _post_vps_promo_to_channel(channel)
 
-    Uses a short-lived Redis lock to prevent duplicate posts when the
-    auto-poster loop and an admin button run at the same time.
-    """
+
+async def _post_vps_promo_to_channel(channel: TelegramChannel) -> bool:
+    """Publish a localized, redacted VPS promotion to one channel."""
     ch_id = str(channel.id)
-
-    # Acquire lock — if another process is already posting to this channel, skip
     if not await acquire_channel_lock(ch_id, ttl=90):
-        logger.info("rdp_post_skipped_locked", channel=channel.display_name)
+        logger.info("vps_promo_skipped_locked", channel=channel.display_name)
         return False
 
     try:
-        from app.services.content.rdp_post_builder import build_rdp_post
+        from app.core.config import settings
+        from app.services.content.rdp_post_builder import build_vps_promo_post
 
-        lang = channel.language or "en"
-        if lang == "fa":
-            lang = "en"
-
-        unique_seed = random.randint(100_000, 99_999_999)
-        rdp_content, rdp_image_url = build_rdp_post(
-            ip=rdp_result["ip"],
-            port=rdp_result["port"],
-            username=rdp_result["username"],
-            password=rdp_result["password"],
-            country_name=rdp_result["country_name"],
-            country_flag=rdp_result["country_flag"],
-            seed=unique_seed,
-            channel_username=channel.username,
+        language = channel.language or "en"
+        promo_content, promo_image_url = build_vps_promo_post(
+            language=language,
+            location=settings.VPS_PROMO_LOCATION,
+            admin_username=settings.POST_ADMIN_USERNAME,
+            seed=random.randint(0, 9_999_999),
         )
-
-        if _is_duplicate(rdp_content):
-            logger.warning("rdp_post_duplicate_skipping", channel=channel.display_name)
+        if _is_duplicate(promo_content):
+            logger.info("vps_promo_duplicate_skipping", channel=channel.display_name)
             return False
 
         async with AsyncSessionLocal() as session:
             post = Post(
                 account_id=channel.account_id,
                 channel_ids=[ch_id],
-                content=rdp_content,
-                languages={lang: rdp_content},
-                image_url=rdp_image_url,
+                content=promo_content,
+                languages={language: promo_content},
+                image_url=promo_image_url,
                 content_type="rdp",
                 status="scheduled",
                 scheduled_at=datetime.now(timezone.utc),
@@ -240,38 +197,27 @@ async def _post_rdp_result_to_channel(rdp_result: dict, channel: TelegramChannel
             try:
                 pub_results = await publish_post(session, post)
                 published_count = sum(
-                    1 for r in pub_results.values() if r.get("status") == "published"
+                    1 for result in pub_results.values()
+                    if result.get("status") == "published"
                 )
                 await session.commit()
-
                 if not published_count:
-                    # publish_post returned without actually sending (manager not
-                    # ready, posting paused, or all channels errored).  Do NOT call
-                    # mark_channel_posted — the channel must stay ready so it is
-                    # retried next cycle instead of sitting on a six-hour cooldown
-                    # with no post delivered.
                     logger.warning(
-                        "rdp_post_publish_no_success_not_marking_cooldown",
+                        "vps_promo_publish_no_success",
                         channel=channel.display_name,
                         results=pub_results,
                     )
                     return False
 
-                _record_hash(rdp_content)
-                logger.info(
-                    "rdp_post_sent",
-                    channel=channel.display_name,
-                    country=rdp_result["country_name"],
-                    ip=rdp_result["ip"],
-                )
+                _record_hash(promo_content)
+                logger.info("vps_promo_post_sent", channel=channel.display_name, language=language)
                 return True
-            except Exception as e:
+            except Exception as exc:
                 post.status = "failed"
                 await session.commit()
-                logger.error("rdp_post_send_failed", channel=channel.display_name, error=str(e))
+                logger.error("vps_promo_send_failed", channel=channel.display_name, error=str(exc))
                 return False
     finally:
-        # Always release the lock — even on exception — so next cycle isn't blocked
         await release_channel_lock(ch_id)
 
 
@@ -423,80 +369,17 @@ async def run_auto_poster(userbot_manager):
 
             logger.info("auto_poster_cycle_starting", channels=len(channels))
 
-            # ── Fetch one RDP result per channel ──────────────────────────────
-            from app.services.scanner.rdp_scanner import scan_for_rdp
-
-            channel_results = []
-            _last_good_rdp = None
-
-            for ch in channels:
-                try:
-                    rdp_result = await asyncio.wait_for(scan_for_rdp(), timeout=45.0)
-                    if rdp_result:
-                        _last_good_rdp = rdp_result
-                        channel_results.append((ch, rdp_result))
-                        logger.info(
-                            "auto_poster_rdp_fetched",
-                            channel=ch.display_name,
-                            ip=rdp_result["ip"],
-                            country=rdp_result["country_name"],
-                        )
-                    elif _last_good_rdp:
-                        channel_results.append((ch, _last_good_rdp))
-                        logger.info(
-                            "auto_poster_rdp_pool_dry_using_fallback",
-                            channel=ch.display_name,
-                            ip=_last_good_rdp["ip"],
-                        )
-                    else:
-                        logger.info(
-                            "auto_poster_rdp_no_result_skipping_channel",
-                            channel=ch.display_name,
-                        )
-                except asyncio.TimeoutError:
-                    if _last_good_rdp:
-                        channel_results.append((ch, _last_good_rdp))
-                        logger.info(
-                            "auto_poster_rdp_timeout_using_fallback",
-                            channel=ch.display_name,
-                            ip=_last_good_rdp["ip"],
-                        )
-                    else:
-                        logger.warning(
-                            "auto_poster_rdp_scan_timeout_skipping_channel",
-                            channel=ch.display_name,
-                        )
-                except Exception as scan_err:
-                    logger.error(
-                        "auto_poster_rdp_scan_error_skipping_channel",
-                        channel=ch.display_name,
-                        error=str(scan_err),
-                    )
-
-            if not channel_results:
-                logger.info("auto_poster_rdp_no_results_sleeping_5min")
-                await asyncio.sleep(300)
-                continue
-
-            logger.info(
-                "auto_poster_rdp_fetch_done",
-                fetched=len(channel_results),
-                total_channels=len(channels),
-            )
-
-            # ── Post to every channel ──────────────────────────────────────────
+            # Publish a generic VPS promotion to active channels; no scanner results
+            # are used as post content or as a trigger for publication.
             posted = 0
-            for ch, rdp_result in channel_results:
-                success = await _post_rdp_result_to_channel(rdp_result, ch)
+            for channel in channels:
+                success = await _post_vps_promo_to_channel(channel)
                 if success:
-                    await mark_channel_posted(str(ch.id))
+                    await mark_channel_posted(str(channel.id))
                     posted += 1
-                    # Small pause between channels to avoid Telegram flood limits
                     await asyncio.sleep(random.randint(8, 15))
 
-            logger.info("auto_poster_cycle_done", posted=posted, total=len(channels))
-
-            # ── Set global six-hour cooldown ────────────────────────────────────
+            logger.info("vps_promo_cycle_done", posted=posted, total=len(channels))
             if posted > 0:
                 await mark_global_posted()
 

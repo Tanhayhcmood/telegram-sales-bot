@@ -138,6 +138,12 @@ class Settings(BaseSettings):
     CONTENT_DEFAULT_LANGUAGES: str = "en,fa"
     CONTENT_HASHTAGS_ENABLED: bool = True
 
+    POST_ADMIN_USERNAME: str = "VPS24H"
+    POST_BUY_VPS_URL: str = "https://t.me/VPS24H"
+    POST_JOIN_CHANNEL_URL: str = ""
+    POST_SUPPORT_URL: str = "https://t.me/VPS24H"
+    VPS_PROMO_LOCATION: str = "Ask support for current regions"
+
     AI_FACT_EXTRACTION_INTERVAL: int = 10
 
     @field_validator("DATABASE_URL", mode="before")
