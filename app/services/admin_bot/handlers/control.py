@@ -400,10 +400,9 @@ async def _bg_rdp_format_test(status_msg) -> None:
 
 @router.callback_query(F.data == "ctrl_rdp_post_now")
 async def ctrl_rdp_post_now(callback: CallbackQuery):
-    """Send a free RDP/server post immediately to ALL active channels (background task)."""
+    """Post the redacted VPS promotion to active channels."""
     status_msg = await callback.message.answer(
-        "🖥 *در حال اسکن برای سرور رایگان...*\n\n"
-        "⏳ اسکنر در حال جستجوی IP با پورت 3389 باز است. چند ثانیه صبر کنید...",
+        "📣 *در حال ارسال معرفی پلن‌های VPS به کانال‌ها...*",
         parse_mode="Markdown",
     )
     await callback.answer()
@@ -416,178 +415,38 @@ async def ctrl_rdp_post_now(callback: CallbackQuery):
 
 
 async def _bg_rdp_post_now(status_msg) -> None:
-    """Background task: scan for RDP server and post to all channels."""
-    _step = "شروع"
+    """Publish a generic VPS promotion; never scan or expose server access data."""
     try:
-        _step = "import"
-        import io
-        import gc
-        from pathlib import Path
-        from telethon.errors import FloodWaitError
-        from app.services.scanner.rdp_scanner import scan_for_rdp
-        from app.services.content.rdp_post_builder import (
-            build_rdp_post,
-            fit_rdp_caption,
-            rdp_caption_utf16_length,
-        )
-        from app.services.content.desktop_image_generator import generate_desktop_image
-        from app.services.channel.auto_poster import _get_active_channels, mark_channel_posted, _toggle_post_mode
-
-        # Step 1: Scan for RDP
-        _step = "scan_rdp"
-        try:
-            rdp_result = await asyncio.wait_for(scan_for_rdp(), timeout=55.0)
-        except asyncio.TimeoutError:
-            rdp_result = None
-
-        if not rdp_result:
-            await status_msg.edit_text(
-                "⚠️ *هیچ سرور بازی پیدا نشد.*\n\nدوباره امتحان کنید.",
-                parse_mode="Markdown", reply_markup=back_kb(),
-            )
-            return
-
-        ip = rdp_result["ip"]
-        port = rdp_result["port"]
-        username = rdp_result["username"]
-        password = rdp_result["password"]
-        country_flag = rdp_result["country_flag"]
-        country_name = rdp_result["country_name"]
-
-        # Step 2: Show found server immediately
-        _step = "show_server"
-        await status_msg.edit_text(
-            f"✅ *سرور پیدا شد!* {country_flag} {country_name}\n\n"
-            f"🔗 IP: `{ip}`\n🔌 Port: `{port}`\n"
-            f"👤 User: `{username}`\n🔑 Pass: `{password}`\n\n"
-            "📤 *در حال ارسال به همه کانال‌ها...*",
-            parse_mode="Markdown",
+        from app.services.channel.auto_poster import (
+            _get_active_channels,
+            _post_to_channel,
+            mark_channel_posted,
         )
 
-        # Step 3: Check connected accounts
-        _step = "list_accounts"
-        accounts = _userbot_manager.list_accounts()
-        connected_accounts = [a for a in accounts if a["is_connected"]]
-        if not connected_accounts:
-            await status_msg.edit_text(
-                "❌ *هیچ یوزربات متصلی وجود ندارد.*\n\nلطفاً ابتدا UserBot را Start کنید.",
-                parse_mode="Markdown", reply_markup=back_kb(),
-            )
-            return
-
-        # Build {account_id_str: UserBotClient}
-        _step = "build_client_map"
-        client_map = {
-            str(a["account_id"]): _userbot_manager.get_client(a["account_id"])
-            for a in connected_accounts
-        }
-        fallback_ub = _userbot_manager.get_client(connected_accounts[0]["account_id"])
-
-        # Step 4: Active channels
-        _step = "get_channels"
-        all_channels = await _get_active_channels()
-        if not all_channels:
+        channels = await _get_active_channels()
+        if not channels:
             await status_msg.edit_text("❌ هیچ کانال فعالی وجود ندارد.", reply_markup=back_kb())
             return
 
-        # Step 6: Send to every channel
-        _step = "send_channels"
-        success, failed = 0, 0
-        failed_reasons = []
-        image_bytes: bytes | None = None
-
-        _step = "generate_image"
-        image_path = await asyncio.wait_for(
-            generate_desktop_image(
-                f"Windows VPS desktop preview for {country_name}",
-            ),
-            timeout=90.0,
-        )
-        if not image_path:
-            await status_msg.edit_text(
-                "❌ *ساخت تصویر انجام نشد.*\n\n"
-                "سرویس ساخت تصویر موقتاً در دسترس نیست. لاگ سرویس را بررسی کنید.",
-                parse_mode="Markdown",
-                reply_markup=back_kb(),
-            )
-            return
-        image_bytes = Path(image_path).read_bytes()
-
-        for ch in all_channels:
-            ch_id = str(ch.id)
-            ub = client_map.get(str(ch.account_id)) or fallback_ub
-            if ub is None:
-                failed += 1
-                failed_reasons.append(f"{ch.telegram_channel_id}: no client")
-                continue
-            # ub is UserBotClient; ub.client is the raw Telethon TelegramClient
-            tg = ub.client
-
-            try:
-                seed = random.randint(100_000, 99_999_999)
-                ch_content, _ = build_rdp_post(
-                    ip=ip, port=port, username=username, password=password,
-                    country_name=country_name, country_flag=country_flag,
-                    seed=seed, channel_username=ch.username,
-                )
-                caption, compacted_chars = fit_rdp_caption(ch_content, 1024)
-                if compacted_chars:
-                    logger.info(
-                        "rdp_caption_decorations_compacted",
-                        channel_id=ch_id,
-                        characters_removed=compacted_chars,
-                        caption_utf16_length=rdp_caption_utf16_length(caption),
-                    )
-
-                async def _send(tg=tg, target=ch.telegram_channel_id,
-                                cap=caption, img=image_bytes):
-                    f = io.BytesIO(img)
-                    f.name = "vps-desktop.png"
-                    return await tg.send_file(target, f, caption=cap, parse_mode="html")
-
-                try:
-                    sent_message = await _send()
-                except FloodWaitError as fw:
-                    await asyncio.sleep(fw.seconds + 3)
-                    sent_message = await _send()
-
-                logger.info(
-                    "admin_rdp_channel_post_sent",
-                    channel_id=ch_id,
-                    message_id=getattr(sent_message, "id", None),
-                    single_message=True,
-                    has_image=True,
-                    caption_utf16_length=rdp_caption_utf16_length(caption),
-                )
+        success = 0
+        for channel in channels:
+            if await _post_to_channel(_userbot_manager, channel):
                 success += 1
-                await mark_channel_posted(ch_id)
-                _toggle_post_mode(ch_id)
-                await asyncio.sleep(3)
+                await mark_channel_posted(str(channel.id))
 
-            except Exception as ch_err:
-                failed += 1
-                failed_reasons.append(f"{ch.telegram_channel_id}: {str(ch_err)[:60]}")
-                logger.error("rdp_channel_send_failed", channel=ch.telegram_channel_id, error=str(ch_err)[:80])
-                await asyncio.sleep(1)
-
-        has_img = "✅" if image_bytes else "❌ (text only)"
-        result_text = (
-            f"{'✅' if success > 0 else '⚠️'} *پست سرور رایگان {'ارسال شد' if success > 0 else 'ارسال نشد'}!*\n\n"
-            f"🌍 {country_flag} {country_name} — `{ip}`\n"
-            f"📡 موفق: `{success}` / `{len(all_channels)}` کانال\n"
-            f"🖼 تصویر: {has_img}"
+        await status_msg.edit_text(
+            f"✅ *معرفی پلن‌های VPS ارسال شد*\n\n"
+            f"📡 موفق: {success} / {len(channels)} کانال",
+            parse_mode="Markdown",
+            reply_markup=back_kb(),
         )
-        if failed_reasons:
-            result_text += "\n\n❌ خطاها:\n" + "\n".join(f"`{r}`" for r in failed_reasons[:5])
-        await status_msg.edit_text(result_text, parse_mode="Markdown", reply_markup=back_kb())
-        logger.info("admin_rdp_post_done", success=success, failed=failed, single_message=True, has_image=bool(image_bytes))
-
-    except Exception as e:
-        logger.error("bg_rdp_post_now_crashed", step=_step, error=str(e))
+        logger.info("admin_vps_promo_post_done", success=success, total=len(channels))
+    except Exception as exc:
+        logger.error("admin_vps_promo_post_failed", error=str(exc))
         try:
             await status_msg.edit_text(
-                f"❌ *خطا در مرحله `{_step}`:*\n`{str(e)[:300]}`",
-                parse_mode="Markdown", reply_markup=back_kb(),
+                "❌ ارسال معرفی VPS انجام نشد. لاگ سرویس را بررسی کنید.",
+                reply_markup=back_kb(),
             )
         except Exception:
             pass

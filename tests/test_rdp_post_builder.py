@@ -1,95 +1,105 @@
 import unittest
+from html.parser import HTMLParser
 
 from app.services.content.rdp_post_builder import (
     build_rdp_post,
     build_rdp_test_caption,
+    build_vps_promo_post,
     fit_rdp_caption,
     rdp_caption_utf16_length,
 )
 
 
-class RdpPostBuilderTests(unittest.TestCase):
-    def build(self, **overrides):
+class TelegramHtmlValidator(HTMLParser):
+    ALLOWED_TAGS = {"b", "blockquote"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.errors = []
+        self.stack = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag not in self.ALLOWED_TAGS or attrs:
+            self.errors.append(f"disallowed tag or attributes: {tag} {attrs}")
+        self.stack.append(tag)
+
+    def handle_endtag(self, tag):
+        if not self.stack or self.stack.pop() != tag:
+            self.errors.append(f"unbalanced tag: {tag}")
+
+
+class VpsPromoTemplateTests(unittest.TestCase):
+    def render(self, **overrides):
         values = {
-            "ip": "203.0.113.10",
-            "port": 3389,
-            "username": "ignored",
-            "password": "test-secret",
-            "country_name": "Unknown",
-            "country_flag": "",
-            "seed": 123,
-            "channel_username": "freeserver11",
+            "language": "en",
+            "location": "Ask support for current regions",
+            "time_value": "06 Nov 2026 12:30",
+            "admin_username": "VPS24H",
+            "seed": 0,
         }
         values.update(overrides)
-        return build_rdp_post(**values)
+        return build_vps_promo_post(**values)[0]
 
-    def test_approved_copy_excludes_site_promotions(self):
-        post, image = self.build()
-        self.assertTrue(post.startswith("🔥 FREE RDP • FREE VPS • WINDOWS RDP • CLOUD VPS 🔥\n"))
-        self.assertEqual(image, "GENERATE_VPS_DESKTOP")
-        self.assertNotIn("Buy directly from the site", post)
-        self.assertNotIn("VPS24H.COM", post)
-        self.assertIn("📍 🌐 Unknown · Port 3389", post)
-        self.assertIn("every ~6 hours", post)
-        self.assertIn("<b>⚡ Instant purchase 24/7 from Telegram admin <a href=\"https://t.me/VPS24H\">@VPS24H</a></b>", post)
-        admin_cta = '<b>⚡ Instant purchase 24/7 from Telegram admin <a href="https://t.me/VPS24H">@VPS24H</a></b>'
-        self.assertEqual(post.count(admin_cta), 2)
-        self.assertIn("──────────────────────────────\n🚀 Connect", post)
-        self.assertIn("📌 Save this post · Share with friends!\n════════", post)
+    def test_template_html_is_valid_and_caption_fits_telegram(self):
+        caption = self.render()
+        parser = TelegramHtmlValidator()
+        parser.feed(caption)
+        parser.close()
 
-    def test_only_server_fields_change_and_channel_link_is_scoped(self):
-        post, _ = self.build(ip="198.51.100.24", password="p<&ss", country_name="Germany", country_flag="🇩🇪")
-        self.assertIn("198.51.100.24:3389", post)
-        self.assertIn("p&lt;&amp;ss", post)
-        self.assertIn("🇩🇪 Germany", post)
-        self.assertIn('<a href="https://t.me/freeserver11">channel</a>', post)
-        self.assertIn("👤  Administrator", post)
-
-    def test_sample_fits_one_photo_caption_without_trimming(self):
-        post, _ = self.build(password="TEST-ONLY-NOT-VALID")
-        caption, removed = fit_rdp_caption(post)
-
-        self.assertEqual(caption, post)
-        self.assertEqual(removed, 0)
+        self.assertEqual(parser.errors, [])
+        self.assertEqual(parser.stack, [])
         self.assertLessEqual(rdp_caption_utf16_length(caption), 1024)
-        self.assertIn("🚀 Connect: mstsc → paste IP → login", caption)
-        self.assertTrue(caption.endswith("</b>"))
+        self.assertEqual(fit_rdp_caption(caption), (caption, 0))
 
-    def test_long_fake_details_compact_only_divider_rules(self):
-        post, _ = self.build(
-            ip="255.255.255.255",
-            password="FAKE-TEST-ONLY-PASSWORD-1234" + "X" * 50,
-            country_name="United Arab Emirates",
-            country_flag="🇦🇪",
+    def test_dynamic_values_are_escaped(self):
+        caption = self.render(
+            location='Region <West & "Central">',
+            time_value='06 <script> & "now"',
+            admin_username='<team&service>',
         )
-        caption, removed = fit_rdp_caption(post)
 
-        def without_rules(value):
-            return [
-                line for line in value.split("\n")
-                if not (line and line[0] in "═─" and all(char == line[0] for char in line))
-            ]
+        self.assertIn("Region &lt;West &amp; &quot;Central&quot;&gt;", caption)
+        self.assertIn("06 &lt;script&gt; &amp; &quot;now&quot;", caption)
+        self.assertIn("@&lt;team&amp;service&gt;", caption)
 
-        self.assertGreater(removed, 0)
+    def test_public_template_never_includes_scan_credentials_or_login_steps(self):
+        caption, _ = build_rdp_post(
+            ip="198.51.100.24",
+            port=3389,
+            username="private-user",
+            password="private-password",
+            country_name="Test Region",
+            country_flag="🏳️",
+            seed=1,
+        )
+
+        for sensitive_value in ("198.51.100.24", "3389", "private-user", "private-password", "mstsc"):
+            self.assertNotIn(sensitive_value, caption)
+        self.assertIn("@VPS24H", caption)
+
+    def test_all_supported_languages_render_and_unknown_uses_english(self):
+        for language in ("en", "fa", "ar", "tr", "ru", "de", "fr", "es", "fa-IR"):
+            with self.subTest(language=language):
+                caption = self.render(language=language)
+                self.assertTrue(caption)
+                self.assertLessEqual(rdp_caption_utf16_length(caption), 1024)
+
+        self.assertEqual(self.render(language="xx"), self.render(language="en"))
+
+    def test_three_header_and_sales_variants_rotate_deterministically(self):
+        captions = [self.render(seed=seed) for seed in range(3)]
+        self.assertEqual(len(set(captions)), 3)
+
+    def test_legacy_test_caption_contains_no_fake_access_details(self):
+        caption = build_rdp_test_caption("@sample_channel")
+        self.assertTrue(caption.startswith("🧪 TEST ONLY — NOT A LIVE SERVER"))
+        self.assertNotIn("203.0.113.42", caption)
+        self.assertNotIn("TEST-ONLY-NOT-A-REAL-LOGIN", caption)
         self.assertLessEqual(rdp_caption_utf16_length(caption), 1024)
-        self.assertEqual(without_rules(caption), without_rules(post))
-        self.assertIn("FAKE-TEST-ONLY-PASSWORD-1234", caption)
 
-    def test_unfit_caption_fails_instead_of_becoming_a_second_message(self):
+    def test_caption_over_limit_fails_instead_of_sending_a_second_message(self):
         with self.assertRaisesRegex(ValueError, "single-photo caption limit"):
             fit_rdp_caption("x" * 1025)
-
-    def test_one_channel_sample_is_clearly_fake_and_fits_in_one_caption(self):
-        caption = build_rdp_test_caption("@freeserver11")
-        fitted, _ = fit_rdp_caption(caption)
-
-        self.assertLessEqual(rdp_caption_utf16_length(fitted), 1024)
-        self.assertTrue(fitted.startswith("🧪 TEST ONLY — NOT A REAL SERVER\n\n"))
-        self.assertIn("203.0.113.42", fitted)
-        self.assertIn("TEST-ONLY-NOT-A-REAL-LOGIN", fitted)
-        self.assertIn('<a href="https://t.me/freeserver11">channel</a>', fitted)
-        self.assertNotIn("Buy directly from the site", fitted)
-        self.assertNotIn("VPS24H.COM", fitted)
 
 
 if __name__ == "__main__":

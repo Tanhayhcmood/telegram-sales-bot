@@ -73,6 +73,24 @@ async def _add_contact_button(channel_id: str | int, message_id: int) -> None:
     except Exception as exc:
         logger.info("add_contact_button_skipped", channel_id=str(channel_id), reason=repr(exc))
 
+def _build_vps_promo_buttons(channel_username: str | None = None):
+    """Build the public VPS-promo keyboard from configured URLs."""
+    from app.core.config import settings
+    from telethon.tl.custom import Button
+
+    fallback_url = "https://t.me/VPS24H"
+    buy_url = settings.POST_BUY_VPS_URL.strip() or fallback_url
+    support_url = settings.POST_SUPPORT_URL.strip() or fallback_url
+    join_url = settings.POST_JOIN_CHANNEL_URL.strip()
+    if not join_url and channel_username:
+        join_url = f"https://t.me/{channel_username.lstrip('@')}"
+    join_url = join_url or fallback_url
+    return [
+        [Button.url("Buy Private VPS", buy_url)],
+        [Button.url("Join Channel", join_url), Button.url("Support", support_url)],
+    ]
+
+
 # ── Admin signatures ─────────────────────────────────────────────────────
 ADMIN_SIGNATURES = [
     "\n\n━━━━━━━━━━━━━━━━━━━━━━━\n🇦️  Channel Admin  ›  @VPS24H",
@@ -410,6 +428,19 @@ async def publish_post(
             continue
 
         content = post.languages.get(channel.language) or post.content
+        if post.content_type == "rdp":
+            from app.core.config import settings
+            from app.services.content.rdp_post_builder import build_vps_promo_post
+
+            content, _ = build_vps_promo_post(
+                language=channel.language or "en",
+                location=settings.VPS_PROMO_LOCATION,
+                admin_username=settings.POST_ADMIN_USERNAME,
+                seed=random.randint(0, 9_999_999),
+            )
+            # Replace any legacy stored RDP payload instead of retaining credentials.
+            post.content = content
+            post.languages = {channel.language or "en": content}
         if not content:
             results[str(channel_id)] = {"status": "skipped", "reason": "no_content_for_language"}
             continue
@@ -534,6 +565,10 @@ async def publish_post(
                     else "html" if post.content_type == "rdp"
                     else "md"
                 )
+                post_buttons = (
+                    _build_vps_promo_buttons(channel.username)
+                    if post.content_type == "rdp" else None
+                )
                 if media_is_video:
                     msg = await _send_with_flood_retry(
                         client.send_file,
@@ -541,6 +576,7 @@ async def publish_post(
                         file_obj,
                         caption=caption,
                         parse_mode=post_parse_mode,
+                        buttons=post_buttons,
                         supports_streaming=True,
                     )
                 else:
@@ -550,8 +586,10 @@ async def publish_post(
                         file_obj,
                         caption=caption,
                         parse_mode=post_parse_mode,
+                        buttons=post_buttons,
                     )
-                await _add_contact_button(channel.telegram_channel_id, msg.id)
+                if post.content_type != "rdp":
+                    await _add_contact_button(channel.telegram_channel_id, msg.id)
                 if post.content_type == "rdp":
                     logger.info(
                         "rdp_post_single_message_sent",
@@ -603,13 +641,19 @@ async def publish_post(
                     else "html" if post.content_type == "rdp"
                     else "md"
                 )
+                post_buttons = (
+                    _build_vps_promo_buttons(channel.username)
+                    if post.content_type == "rdp" else None
+                )
                 msg = await _send_with_flood_retry(
                     client.send_message,
                     channel.telegram_channel_id,
                     text,
                     parse_mode=post_parse_mode,
+                    buttons=post_buttons,
                 )
-                await _add_contact_button(channel.telegram_channel_id, msg.id)
+                if post.content_type != "rdp":
+                    await _add_contact_button(channel.telegram_channel_id, msg.id)
                 results[str(channel_id)] = {
                     "status": "published",
                     "message_id": msg.id,
